@@ -1,2 +1,6 @@
 # PyCharm
 .idea
+
+config.py
+*.nc
+*.tif
