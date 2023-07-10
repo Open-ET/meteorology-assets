@@ -21,12 +21,15 @@ logging.getLogger('rasterio').setLevel(logging.WARNING)
 # logging.getLogger('requests').setLevel(logging.INFO)
 # logging.getLogger('urllib3').setLevel(logging.INFO)
 
-ASSET_FOLDER = 'projects/openet/assets/meteorology/conus404'
+# CGM - Switching to native assets for now until COG projection issue is worked out
+ASSET_FOLDER = 'projects/earthengine-legacy/assets/projects/openet/meteorology/conus/conus404'
+# ASSET_FOLDER = 'projects/openet/assets/meteorology/conus404'
 PROJECT_NAME = 'openet'
 BUCKET_NAME = 'openet_temp'
 BUCKET_FOLDER = 'meteorology/conus404/ancillary'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
-NC_URL = "https://rda.ucar.edu/thredds/dodsC/files/g/ds559.0/INVARIANT/wrfconstants_usgs404.nc"
+NC_URL = "https://thredds.rda.ucar.edu/thredds/dodsC/files/g/ds559.0/INVARIANT/wrfconstants_usgs404.nc"
+# NC_URL = "https://rda.ucar.edu/thredds/dodsC/files/g/ds559.0/INVARIANT/wrfconstants_usgs404.nc"
 
 
 def main(overwrite_flag=False):
@@ -111,6 +114,25 @@ def main(overwrite_flag=False):
         logging.debug(f' {bucket_path}')
         logging.debug(f' {asset_id}')
 
+        if var_name in ['XLAT', 'XLONG', 'HGT']:
+            nodata_value = -9999
+            # dtype = rasterio.float64
+            dtype = rasterio.float32
+            # resampling = rasterio.warp.Resampling.average
+            # resampling_str = 'average'
+            pyramid_policy = 'MEAN'
+        else:
+            nodata_value = 255
+            dtype = rasterio.uint8
+            # resampling = rasterio.warp.Resampling.mode
+            # resampling_str = 'mode'
+            # # resampling = rasterio.warp.Resampling.nearest
+            # # resampling = 'nearest'
+            pyramid_policy = 'MODE'
+        logging.debug(f' {nodata_value}')
+        logging.debug(f' {dtype}')
+        logging.debug(f' {pyramid_policy}')
+
         if overwrite_flag or not os.path.isfile(tif_path):
             # Download the array
             try:
@@ -129,25 +151,6 @@ def main(overwrite_flag=False):
             else:
                 logging.warning(f'unexpected array shape ({array.shape}), skipping')
                 continue
-
-            if var_name in ['XLAT', 'XLONG', 'HGT']:
-                nodata_value = -9999
-                # dtype = rasterio.float64
-                dtype = rasterio.float32
-                # resampling = rasterio.warp.Resampling.average
-                # resampling_str = 'average'
-                pyramid_policy = 'MEAN'
-            else:
-                nodata_value = 255
-                dtype = rasterio.uint8
-                # resampling = rasterio.warp.Resampling.mode
-                # resampling_str = 'mode'
-                # # resampling = rasterio.warp.Resampling.nearest
-                # # resampling = 'nearest'
-                pyramid_policy = 'MODE'
-            logging.debug(f' {nodata_value}')
-            logging.debug(f' {dtype}')
-            logging.debug(f' {pyramid_policy}')
 
             logging.info(f'Writing geotiff')
             output_ds = rasterio.open(

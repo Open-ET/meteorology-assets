@@ -18,23 +18,25 @@ import rasterio
 import rasterio.warp
 import refet
 
-# import config
-
 # logging.getLogger('boto3').setLevel(logging.WARNING)
 # logging.getLogger('botocore').setLevel(logging.WARNING)
+# logging.getLogger('dask').setLevel(logging.WARNING)
 # logging.getLogger('ee').setLevel(logging.WARNING)
 # logging.getLogger('earthengine-api').setLevel(logging.WARNING)
-# # logging.getLogger('googleapiclient').setLevel(logging.ERROR)
+# logging.getLogger('googleapiclient').setLevel(logging.ERROR)
 # logging.getLogger('intake').setLevel(logging.INFO)
-# logging.getLogger('nose').setLevel(logging.WARNING)
+# # logging.getLogger('nose').setLevel(logging.WARNING)
 # logging.getLogger('rasterio').setLevel(logging.WARNING)
 # logging.getLogger('requests').setLevel(logging.WARNING)
 # logging.getLogger('s3fs').setLevel(logging.WARNING)
+# logging.getLogger('threading').setLevel(logging.WARNING)
 # logging.getLogger('urllib3').setLevel(logging.WARNING)
 # logging.getLogger('xarray').setLevel(logging.WARNING)
 # logging.getLogger('zarr').setLevel(logging.WARNING)
 
-ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily'
+# CGM - Switching to native assets for now until COG projection issue is worked out
+ASSET_COLL_ID = 'projects/earthengine-legacy/assets/projects/openet/meteorology/conus/conus404/daily'
+# ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily'
 BUCKET_NAME = 'openet_assets'
 BUCKET_FOLDER = 'meteorology/conus404/daily'
 # ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily_zarr'
@@ -66,7 +68,8 @@ START_HOUR_OFFSET = 6
 CELLSIZE = 4000
 CRS = rasterio.crs.CRS.from_proj4(
     '+proj=lcc +lat_1=30.0 +lat_2=50.0 +lat_0=39.100006 +lon_0=-97.9 '
-    '+a=6370000 +b=6370000 +units=m +no_defs=True'
+    '+R=6370000 +units=m +no_defs=True'
+    # '+a=6370000 +b=6370000 +units=m +no_defs=True'
 )
 # The crs parameter needs to be manually set with the WKT in the ingest call
 # To get the alignment right the datum needs to be WGS84 (instead of a sphere)
@@ -99,22 +102,23 @@ TRANSFORM = [
 
 TOOL_NAME = 'conus404_daily_zarr'
 # TOOL_NAME = os.path.basename(__file__)
-TOOL_VERSION = '0.1.0'
+TOOL_VERSION = '0.1.1'
 
 # TODO: Add support for Initializing from a json key file and/or ADC
 # if 'FUNCTION_REGION' in os.environ:
-# SCOPES = [
-#     'https://www.googleapis.com/auth/cloud-platform',
-#     'https://www.googleapis.com/auth/earthengine',
-# ]
-# credentials, project_id = google.auth.default(default_scopes=SCOPES)
-# ee.Initialize(credentials)
+#     SCOPES = [
+#         'https://www.googleapis.com/auth/cloud-platform',
+#         'https://www.googleapis.com/auth/earthengine',
+#     ]
+#     credentials, project_id = google.auth.default(default_scopes=SCOPES)
+#     ee.Initialize(credentials)
+# else:
 ee.Initialize()
 
 
 def main(start_dt, end_dt, variables,
          # download_flag=False, upload_flag=False,
-         workspace='/tmp', overwrite_flag=False, reverse_flag=False
+         workspace='/tmp', overwrite_flag=False, reverse_flag=False, delay=0,
     ):
     """"""
 
@@ -127,7 +131,7 @@ def main(start_dt, end_dt, variables,
     # TODO: Switch to reading ancillary arrays from bucket assets
     logging.debug(f'\nReading ancillary arrays')
     ancillary_ws = os.path.join(
-        os.path.dirname(workspace), 'conus404_tools', 'ancillary'
+        os.path.dirname(workspace), 'conus404_ancillary', 'ancillary'
     )
     with rasterio.open(os.path.join(ancillary_ws, 'elevation.tif')) as src:
         elevation = src.read(1)
@@ -153,6 +157,9 @@ def main(start_dt, end_dt, variables,
             tgt_dt, variables, workspace=workspace, overwrite_flag=overwrite_flag,
             elevation=elevation, latitude=latitude, longitude=None, mask=mask,
         )
+
+        if delay > 0:
+            time.sleep(delay)
 
 
 def conus404_daily_asset_ingest(
@@ -198,8 +205,6 @@ def conus404_daily_asset_ingest(
     # date_ws = os.path.join(
     #     workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%m'), tgt_dt.strftime('%d')
     # )
-    if not os.path.isdir(date_ws):
-        os.makedirs(date_ws)
 
     upload_path = os.path.join(date_ws, f'{tgt_dt.strftime(ASSET_DT_FMT)}.tif')
     bucket_path = f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
@@ -208,6 +213,11 @@ def conus404_daily_asset_ingest(
     logging.debug(f'  {upload_path}')
     logging.debug(f'  {bucket_path}')
     logging.debug(f'  {asset_id}')
+
+    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
+    img_blob = bucket.blob(f'{BUCKET_FOLDER}/{os.path.basename(bucket_path)}')
+    json_blob = bucket.blob(bucket_json.replace(f'gs://{BUCKET_NAME}/', ''))
+
 
     # Set start time to 6 UTC to match GRIDMET (or 7?)
     # This should help set the solar sum and tmax/tmin correctly
@@ -235,206 +245,212 @@ def conus404_daily_asset_ingest(
             logging.info(f'  Asset already exists and overwrite is False')
             return True
 
-    try:
-        cat = intake.open_catalog(SOURCE_URL)
-        hourly_ds = cat[SOURCE_NAME].to_dask()
-    except Exception as e:
-        logging.exception(e)
-        logging.warning('unhandled exception opening dataset, exiting')
-        return False
 
-    # TODO: The precipitation start/end time should probably be shifted back an hour
-    #   since PREC_ACC_NN is an accumulation of the previous hour
+    # Download the arrays and build a geotiff if one does not already exist
+    if overwrite_flag or (not os.path.isfile(upload_path) and not img_blob.exists()):
+        try:
+            cat = intake.open_catalog(SOURCE_URL)
+            hourly_ds = cat[SOURCE_NAME].to_dask()
+        except Exception as e:
+            logging.exception(e)
+            logging.warning('unhandled exception opening dataset, exiting')
+            return False
 
-    daily_arrays = {}
-    for variable in variables:
-        logging.debug(f'  {variable}')
+        # TODO: The precipitation start/end time should probably be shifted back an hour
+        #   since PREC_ACC_NN is an accumulation of the previous hour
 
-        if variable == 'WIND10':
-            u10 = hourly_ds['U10'].sel(time=slice(start_dt, end_inclusive_dt))
-            v10 = hourly_ds['V10'].sel(time=slice(start_dt, end_inclusive_dt))
-            daily_arrays[variable] = np.sqrt(np.square(u10) + np.square(v10)).mean('time').values
-            del u10, v10
-        elif variable == 'ACSWDNB':
-            # ACSWDNB is accumulated from 1979-10-01
-            # ACSWDNB is in units of J m-2
-            swdnb_a = hourly_ds[variable].sel(time=start_dt).values
-            swdnb_b = hourly_ds[variable].sel(time=start_dt + timedelta(hours=24)).values
-            daily_arrays[variable] = swdnb_b - swdnb_a
-            del swdnb_a, swdnb_b
-        elif variable == 'ACSWDNLSM':
-            # ACSWDNLSM is accumulated for each hour
-            daily_arrays[variable] = hourly_ds[variable]\
-                .sel(time=slice(start_dt, end_inclusive_dt)).sum('time').values
-            # Convert ACSWDNLSM from KJ m-2 to J m-2
-            daily_arrays[variable] = daily_arrays[variable] * 1000
-        elif variable in ['ETO_ASCE', 'ETR_ASCE']:
-            # Reference ET will  be computed below after reading all variables
-            continue
-        elif variable in agg_type.keys() and variable in agg_src.keys():
-            # TODO: Check if the agg_src value is in ZARR_VARS?
-            if agg_src[variable] not in ZARR_VARS:
-                logging.info('Variable is not in zarr catalog')
-                continue
-            elif agg_type[variable].lower() == 'sum':
-                daily_arrays[variable] = hourly_ds[agg_src[variable]]\
+        daily_arrays = {}
+        for variable in variables:
+            logging.info(f'  {variable}')
+
+            if variable == 'WIND10':
+                u10 = hourly_ds['U10'].sel(time=slice(start_dt, end_inclusive_dt))
+                v10 = hourly_ds['V10'].sel(time=slice(start_dt, end_inclusive_dt))
+                daily_arrays[variable] = np.sqrt(np.square(u10) + np.square(v10)).mean('time').values
+                del u10, v10
+            elif variable == 'ACSWDNB':
+                # ACSWDNB is accumulated from 1979-10-01
+                # ACSWDNB is in units of J m-2
+                swdnb_a = hourly_ds[variable].sel(time=start_dt).values
+                swdnb_b = hourly_ds[variable].sel(time=start_dt + timedelta(hours=24)).values
+                daily_arrays[variable] = swdnb_b - swdnb_a
+                del swdnb_a, swdnb_b
+            elif variable == 'ACSWDNLSM':
+                # ACSWDNLSM is accumulated for each hour
+                daily_arrays[variable] = hourly_ds[variable]\
                     .sel(time=slice(start_dt, end_inclusive_dt)).sum('time').values
-            elif agg_type[variable].lower() == 'minimum':
-                daily_arrays[variable] = hourly_ds[agg_src[variable]]\
-                    .sel(time=slice(start_dt, end_inclusive_dt)).min('time').values
-            elif agg_type[variable].lower() == 'maximum':
-                daily_arrays[variable] = hourly_ds[agg_src[variable]]\
-                    .sel(time=slice(start_dt, end_inclusive_dt)).max('time').values
-            elif agg_type[variable].lower() in ['mean', 'average']:
-                daily_arrays[variable] = hourly_ds[agg_src[variable]] \
-                    .sel(time=slice(start_dt, end_inclusive_dt)).mean('time').values
+                # Convert ACSWDNLSM from KJ m-2 to J m-2
+                daily_arrays[variable] = daily_arrays[variable] * 1000
+            elif variable in ['ETO_ASCE', 'ETR_ASCE']:
+                # Reference ET will  be computed below after reading all variables
+                continue
+            elif variable in agg_type.keys() and variable in agg_src.keys():
+                # TODO: Check if the agg_src value is in ZARR_VARS?
+                if agg_src[variable] not in ZARR_VARS:
+                    logging.info('Variable is not in zarr catalog')
+                    continue
+                elif agg_type[variable].lower() == 'sum':
+                    daily_arrays[variable] = hourly_ds[agg_src[variable]]\
+                        .sel(time=slice(start_dt, end_inclusive_dt)).sum('time').values
+                elif agg_type[variable].lower() == 'minimum':
+                    daily_arrays[variable] = hourly_ds[agg_src[variable]]\
+                        .sel(time=slice(start_dt, end_inclusive_dt)).min('time').values
+                elif agg_type[variable].lower() == 'maximum':
+                    daily_arrays[variable] = hourly_ds[agg_src[variable]]\
+                        .sel(time=slice(start_dt, end_inclusive_dt)).max('time').values
+                elif agg_type[variable].lower() in ['mean', 'average']:
+                    daily_arrays[variable] = hourly_ds[agg_src[variable]] \
+                        .sel(time=slice(start_dt, end_inclusive_dt)).mean('time').values
+                else:
+                    raise ValueError(f'\nUnsupported agg type: {agg_type[variable]}')
             else:
-                raise ValueError(f'\nUnsupported agg type: {agg_type[variable]}')
-        else:
-            # Default to a mean aggregation for variables that were not explicitly set
-            daily_arrays[variable] = hourly_ds[variable]\
-                .sel(time=slice(start_dt, end_inclusive_dt)).mean('time').values
+                # Default to a mean aggregation for variables that were not explicitly set
+                daily_arrays[variable] = hourly_ds[variable]\
+                    .sel(time=slice(start_dt, end_inclusive_dt)).mean('time').values
 
-        # Subset and flip the arrays if needed
-        if daily_arrays[variable].shape == (SHAPE[0], SHAPE[1]):
-            daily_arrays[variable] = np.flipud(daily_arrays[variable][:, :])
-        elif daily_arrays[variable].shape == (1, SHAPE[0], SHAPE[1]):
-            daily_arrays[variable] = np.flipud(daily_arrays[variable][0, :, :])
-        else:
-            logging.warning(f'unexpected array shape ({daily_arrays[variable].shape}), skipping')
-            continue
+            # Subset and flip the arrays if needed
+            if daily_arrays[variable].shape == (SHAPE[0], SHAPE[1]):
+                daily_arrays[variable] = np.flipud(daily_arrays[variable][:, :])
+            elif daily_arrays[variable].shape == (1, SHAPE[0], SHAPE[1]):
+                daily_arrays[variable] = np.flipud(daily_arrays[variable][0, :, :])
+            else:
+                logging.warning(f'unexpected array shape ({daily_arrays[variable].shape}), skipping')
+                continue
 
-        # # Apply the nodata mask
-        # if mask is not None:
-        #     daily_arrays[variable][mask == 0] = np.nan
+            # # Apply the nodata mask
+            # if mask is not None:
+            #     daily_arrays[variable][mask == 0] = np.nan
 
 
-    # # TODO: Test out computing reference ET hourly instead of daily
-    # hourly_arrays = {}
-    # for variable in zarr_vars:
-    #     hourly_arrays[variable] = hourly_ds[variable]\
-    #         .sel(time=slice(start_dt, end_dt)).values
-    # pprint.pprint(hourly_arrays)
-    # print(hourly_array.keys())
-    # input('ENTER')
-    #
-    # # Compute the wind magnitude for the hour
-    # if ('WIND10' in variables and
-    #         'U10' in hourly_arrays.keys() and
-    #         'V10' in hourly_arrays.keys()):
-    #     h_arrays['WIND10'] = np.sqrt(h_arrays['U10'] ** 2 + h_arrays['V10'] ** 2)
-    #     # del h_arrays['U10']
-    #     # del h_arrays['V10']
-    #
-    # # CGM - This needs to be iterated for each hour
-    # logging.debug('  Computing hourly reference ET')
-    # for h in range(0, 24):
-    #     refet_obj = refet.Hourly(
-    #         tmean=h_arrays['T2'][h] - 273.15,
-    #         tdew=h_arrays['TD2'][h] - 273.15,
-    #         rs=h_arrays['ACSWDNB'] * ,
-    #         uz=h_arrays['WIND10'][h],
-    #         zw=10,
-    #         elev=elevation,
-    #         lat=latitude,
-    #         lon=longitude,
-    #         doy=int(tgt_dt.strftime('%j')),
-    #         time=h,
-    #         method='asce',
-    #         # input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1'}
-    #     )
-    #     if 'ETO_ASCE' in variables:
-    #         h_arrays['ETO_ASCE'][h] = refet_obj.etsz('eto')
-    #     if 'ETR_ASCE' in variables:
-    #         h_arrays['ETR_ASCE'][h] = refet_obj.etsz('etr')
+        # # TODO: Test out computing reference ET hourly instead of daily
+        # hourly_arrays = {}
+        # for variable in zarr_vars:
+        #     hourly_arrays[variable] = hourly_ds[variable]\
+        #         .sel(time=slice(start_dt, end_dt)).values
+        # pprint.pprint(hourly_arrays)
+        # print(hourly_array.keys())
+        # input('ENTER')
+        #
+        # # Compute the wind magnitude for the hour
+        # if ('WIND10' in variables and
+        #         'U10' in hourly_arrays.keys() and
+        #         'V10' in hourly_arrays.keys()):
+        #     h_arrays['WIND10'] = np.sqrt(h_arrays['U10'] ** 2 + h_arrays['V10'] ** 2)
+        #     # del h_arrays['U10']
+        #     # del h_arrays['V10']
+        #
+        # # CGM - This needs to be iterated for each hour
+        # logging.debug('  Computing hourly reference ET')
+        # for h in range(0, 24):
+        #     refet_obj = refet.Hourly(
+        #         tmean=h_arrays['T2'][h] - 273.15,
+        #         tdew=h_arrays['TD2'][h] - 273.15,
+        #         rs=h_arrays['ACSWDNB'] * ,
+        #         uz=h_arrays['WIND10'][h],
+        #         zw=10,
+        #         elev=elevation,
+        #         lat=latitude,
+        #         lon=longitude,
+        #         doy=int(tgt_dt.strftime('%j')),
+        #         time=h,
+        #         method='asce',
+        #         # input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1'}
+        #     )
+        #     if 'ETO_ASCE' in variables:
+        #         h_arrays['ETO_ASCE'][h] = refet_obj.etsz('eto')
+        #     if 'ETR_ASCE' in variables:
+        #         h_arrays['ETR_ASCE'][h] = refet_obj.etsz('etr')
 
 
-    if 'ETO_ASCE' in variables or 'ETR_ASCE' in variables:
-        # TODO: Check if all of the variables needed to compute reference are present
-        for v in refet_vars:
+        if 'ETO_ASCE' in variables or 'ETR_ASCE' in variables:
+            # TODO: Check if all of the variables needed to compute reference are present
+            for v in refet_vars:
+                if v not in daily_arrays.keys():
+                    logging.error(f'The daily array for variable {v} is missing, skipping date')
+                    return False
+
+            logging.debug('  Computing daily reference ET')
+            refet_obj = refet.Daily(
+                tmin=daily_arrays['T2_MIN'] - 273.15,
+                tmax=daily_arrays['T2_MAX'] - 273.15,
+                tdew=daily_arrays['TD2'] - 273.15,
+                # ACSWDNB and ACSWDNLSM are in units of J m-2
+                rs=daily_arrays['ACSWDNB'] / 1000000,
+                # DEADBEEF - Old conversions for SWDOWN in W m-2
+                # SWDOWN aggregated as the sum and converted to MJ m-2
+                # rs=daily_arrays['SWDOWN'] * 0.0036,
+                # SWDOWN aggregated as the mean and converted to MJ m-2
+                # rs=daily_arrays['SWDOWN'] * 0.0864,
+                uz=daily_arrays['WIND10'],
+                zw=10,
+                elev=elevation,
+                lat=latitude,
+                doy=int(tgt_dt.strftime('%j')),
+                method='asce',
+            )
+            if 'ETO_ASCE' in variables:
+                daily_arrays['ETO_ASCE'] = refet_obj.etsz('eto')
+            if 'ETR_ASCE' in variables:
+                daily_arrays['ETR_ASCE'] = refet_obj.etsz('etr')
+
+        # Convert solar to W m-2 to match SWDOWN in the netcdf files
+        # SWDNB and SWDNLSM are both already converted to MJ m-2
+        # if 'SWDNB' in daily_arrays.keys():
+        #     daily_arrays['SWDNB'] = daily_arrays['SWDNB'] / 0.0036
+        # if 'SWDNLSM' in daily_arrays.keys():
+        #     daily_arrays['SWDNLSM'] = daily_arrays['SWDNLSM'] / 0.0036
+        # if 'SWDOWN' in daily_arrays.keys():
+        #     daily_arrays['SWDOWN'] = daily_arrays['SWDOWN'] / 1000000 / 0.0036
+
+        # TODO: Check if all of the expected daily variables are present
+        for v in variables:
             if v not in daily_arrays.keys():
                 logging.error(f'The daily array for variable {v} is missing, skipping date')
                 return False
 
-        logging.debug('  Computing daily reference ET')
-        refet_obj = refet.Daily(
-            tmin=daily_arrays['T2_MIN'] - 273.15,
-            tmax=daily_arrays['T2_MAX'] - 273.15,
-            tdew=daily_arrays['TD2'] - 273.15,
-            # ACSWDNB and ACSWDNLSM are in units of J m-2
-            rs=daily_arrays['ACSWDNB'] / 1000000,
-            # DEADBEEF - Old conversions for SWDOWN in W m-2
-            # SWDOWN aggregated as the sum and converted to MJ m-2
-            # rs=daily_arrays['SWDOWN'] * 0.0036,
-            # SWDOWN aggregated as the mean and converted to MJ m-2
-            # rs=daily_arrays['SWDOWN'] * 0.0864,
-            uz=daily_arrays['WIND10'],
-            zw=10,
-            elev=elevation,
-            lat=latitude,
-            doy=int(tgt_dt.strftime('%j')),
-            method='asce',
+        # Apply the mask if necessary
+        if mask is not None:
+            for v in variables:
+                daily_arrays[v][mask == 0] = NODATA_VALUE
+
+        # if os.path.isfile(upload_path) and not overwrite_flag:
+        #     logging.debug('  Composite raster already exists, skipping')
+
+        if not os.path.isdir(date_ws):
+            os.makedirs(date_ws)
+
+        # Build the images as COGs just in case we use them as COG backed assets
+        # Deflate seemed to make the files about 10% smaller than LZW
+        logging.debug('  Writing geotiff')
+        output_ds = rasterio.open(
+            upload_path, 'w', driver='COG', blocksize=256,
+            dtype=DTYPE, nodata=NODATA_VALUE, compress='deflate',
+            width=SHAPE[1], height=SHAPE[0], count=len(variables),
+            crs=EE_WKT, transform=TRANSFORM,
+            # crs=CRS, transform=TRANSFORM,
         )
-        if 'ETO_ASCE' in variables:
-            daily_arrays['ETO_ASCE'] = refet_obj.etsz('eto')
-        if 'ETR_ASCE' in variables:
-            daily_arrays['ETR_ASCE'] = refet_obj.etsz('etr')
-
-    # Convert solar to W m-2 to match SWDOWN in the netcdf files
-    # SWDNB and SWDNLSM are both already converted to MJ m-2
-    # if 'SWDNB' in daily_arrays.keys():
-    #     daily_arrays['SWDNB'] = daily_arrays['SWDNB'] / 0.0036
-    # if 'SWDNLSM' in daily_arrays.keys():
-    #     daily_arrays['SWDNLSM'] = daily_arrays['SWDNLSM'] / 0.0036
-    # if 'SWDOWN' in daily_arrays.keys():
-    #     daily_arrays['SWDOWN'] = daily_arrays['SWDOWN'] / 1000000 / 0.0036
-
-    # TODO: Check if all of the expected daily variables are present
-    for v in variables:
-        if v not in daily_arrays.keys():
-            logging.error(f'The daily array for variable {v} is missing, skipping date')
-            return False
-
-    # Apply the mask if necessary
-    if mask is not None:
-        for v in variables:
-            daily_arrays[v][mask == 0] = NODATA_VALUE
-
-    # if os.path.isfile(upload_path) and not overwrite_flag:
-    #     logging.debug('  Composite raster already exists, skipping')
-
-    # Build the images as COGs just in case we use them as COG backed assets
-    # Deflate seemed to make the files about 10% smaller than LZW
-    logging.debug('  Writing geotiff')
-    output_ds = rasterio.open(
-        upload_path, 'w', driver='COG', blocksize=256,
-        dtype=DTYPE, nodata=NODATA_VALUE, compress='deflate',
-        width=SHAPE[1], height=SHAPE[0], count=len(variables),
-        crs=CRS, transform=TRANSFORM,
-    )
-    # # DEADBEEF - Save as geotiff instead of COG
-    # output_ds = rasterio.open(
-    #     upload_path, 'w', driver='GTiff', blockxsize=256, blockysize=256,
-    #     dtype=DTYPE, nodata=NODATA_VALUE, compress='deflate',
-    #     width=SHAPE[1], height=SHAPE[0], count=len(hourly_arrays.keys()),
-    #     crs=CRS, transform=TRANSFORM,
-    # )
-    for band_i, variable in enumerate(variables):
-        output_ds.set_band_description(band_i+1, variable)
-        d_array = daily_arrays[variable]
-        d_array[np.isnan(d_array)] = NODATA_VALUE
-        output_ds.write(d_array, band_i+1)
-        del d_array
-    output_ds.build_overviews(OVERVIEW_LEVELS, rasterio.warp.Resampling.average)
-    output_ds.update_tags(ns='rio_overview', resampling='average')
-    output_ds.close()
-    del output_ds
-    del daily_arrays
+        # # DEADBEEF - Save as geotiff instead of COG
+        # output_ds = rasterio.open(
+        #     upload_path, 'w', driver='GTiff', blockxsize=256, blockysize=256,
+        #     dtype=DTYPE, nodata=NODATA_VALUE, compress='deflate',
+        #     width=SHAPE[1], height=SHAPE[0], count=len(hourly_arrays.keys()),
+        #     crs=CRS, transform=TRANSFORM,
+        # )
+        for band_i, variable in enumerate(variables):
+            output_ds.set_band_description(band_i+1, variable)
+            d_array = daily_arrays[variable]
+            d_array[np.isnan(d_array)] = NODATA_VALUE
+            output_ds.write(d_array, band_i+1)
+            del d_array
+        output_ds.build_overviews(OVERVIEW_LEVELS, rasterio.warp.Resampling.average)
+        output_ds.update_tags(ns='rio_overview', resampling='average')
+        output_ds.close()
+        del output_ds
+        del daily_arrays
 
 
     # CGM - Uploading the properties json should happen before uploading the image
     #   to warmup the cloud function
-    logging.debug('  Uploading properties json to bucket')
     properties = {
         'system:index': tgt_dt.strftime(ASSET_DT_FMT),
         'system:time_start': millis(start_dt),
@@ -452,22 +468,19 @@ def conus404_daily_asset_ingest(
         properties['refet_version'] = importlib_metadata.version("refet")
         # properties['refet_version'] = importlib.metadata.version("refet")
 
-    # Save the properties JSON file to the bucket
-    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
-    blob = bucket.blob(bucket_json.replace(f'gs://{BUCKET_NAME}/', ''))
-    blob.upload_from_string(json.dumps(properties))
 
+    if overwrite_flag or not json_blob.exists():
+        logging.debug('  Uploading properties json to bucket')
+        json_blob.upload_from_string(json.dumps(properties))
 
-    logging.debug('  Uploading to bucket')
-    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
-    blob = bucket.blob(f'{BUCKET_FOLDER}/{os.path.basename(bucket_path)}')
-    try:
-        blob.upload_from_filename(upload_path, timeout=120)
-    except Exception as e:
-        logging.warning(f'{e}')
-        # return f'  Exception uploading file to bucket\n'
-        return False
-
+    if overwrite_flag or not img_blob.exists():
+        logging.debug('  Uploading image to bucket')
+        try:
+            img_blob.upload_from_filename(upload_path, timeout=120)
+        except Exception as e:
+            logging.warning(f'{e}')
+            # return f'  Exception uploading file to bucket\n'
+            return False
 
     # # CGM - Upload code from ERA5 Land ingest,
     # #   Not sure if setting the chunk_size parameter is needed/helpful
@@ -500,43 +513,43 @@ def conus404_daily_asset_ingest(
     # #     raise Exception('Unhandled exception registering COG')
 
 
-    # # CGM - Code for ingesting the image as a native asset
-    # logging.info('  Ingesting into Earth Engine')
-    # logging.debug(f'  {asset_id}')
-    # task_id = ee.data.newTaskId()[0]
-    # logging.debug(f'  {task_id}')
-    # params = {
-    #     'name': asset_id,
-    #     'bands': [
-    #         {'id': v, 'tilesetId': 'image', 'tilesetBandIndex': i}
-    #         for i, v in enumerate(variables)
-    #     ],
-    #     'tilesets': [{
-    #         'id': 'image',
-    #         'crs': EE_WKT,
-    #         'sources': [{
-    #             'uris': [bucket_path],
-    #             'affine_transform': {
-    #                 'scale_x': TRANSFORM[0],
-    #                 'shear_x': TRANSFORM[1],
-    #                 'translate_x': TRANSFORM[2],
-    #                 'shear_y': TRANSFORM[3],
-    #                 'scale_y': TRANSFORM[4],
-    #                 'translate_y': TRANSFORM[5],
-    #               },
-    #         }],
-    #     }],
-    #     'properties': {
-    #         'date': tgt_dt.strftime('%Y-%m-%d'),
-    #         'date_ingested': datetime.today().strftime('%Y-%m-%d'),
-    #         # 'doy': int(tgt_dt.strftime('%j')),
-    #         'source': SOURCE_NAME,
-    #     },
-    #     'startTime': tgt_dt.strftime('%Y-%m-%dT%H:00:00') + '.000000000Z',
-    #     'pyramidingPolicy': 'MEAN',
-    #     # 'missingData': {'values': [nodata_value]},
-    # }
-    # ee.data.startIngestion(task_id, params, allow_overwrite=True)
+    # CGM - Code for ingesting the image as a native asset
+    logging.info('  Ingesting into Earth Engine')
+    logging.debug(f'  {asset_id}')
+    task_id = ee.data.newTaskId()[0]
+    logging.debug(f'  {task_id}')
+    params = {
+        'name': asset_id,
+        'bands': [
+            {'id': v, 'tilesetId': 'image', 'tilesetBandIndex': i}
+            for i, v in enumerate(variables)
+        ],
+        'tilesets': [{
+            'id': 'image',
+            'crs': EE_WKT,
+            'sources': [{
+                'uris': [bucket_path],
+                'affine_transform': {
+                    'scale_x': TRANSFORM[0],
+                    'shear_x': TRANSFORM[1],
+                    'translate_x': TRANSFORM[2],
+                    'shear_y': TRANSFORM[3],
+                    'scale_y': TRANSFORM[4],
+                    'translate_y': TRANSFORM[5],
+                  },
+            }],
+        }],
+        'properties': {
+            'date': tgt_dt.strftime('%Y-%m-%d'),
+            'date_ingested': datetime.today().strftime('%Y-%m-%d'),
+            # 'doy': int(tgt_dt.strftime('%j')),
+            'source': SOURCE_NAME,
+        },
+        'startTime': tgt_dt.strftime('%Y-%m-%dT%H:00:00') + '.000000000Z',
+        'pyramidingPolicy': 'MEAN',
+        # 'missingData': {'values': [nodata_value]},
+    }
+    ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
     # logging.info('  Removing from bucket')
     # if blob and blob.exists():
@@ -548,7 +561,7 @@ def conus404_daily_asset_ingest(
     if os.path.isfile(upload_path):
         os.remove(upload_path)
 
-    logging.info(f'  {time.time() - time_start}')
+    # logging.info(f'  {time.time() - time_start}')
 
 
 def datetime_range(start_dt, end_dt, hours=1, skip_leap_days=False):
@@ -644,6 +657,8 @@ def arg_parse():
         '--reverse', default=False, action='store_true',
         help='Process dates in reverse order')
     parser.add_argument(
+        '--delay', type=int, default=0, help='Delay between ingest calls')
+    parser.add_argument(
         '--debug', default=logging.INFO, const=logging.DEBUG,
         help='Debug level logging', action='store_const', dest='loglevel')
     args = parser.parse_args()
@@ -682,4 +697,5 @@ if __name__ == '__main__':
         # upload_flag=args.upload,
         overwrite_flag=args.overwrite,
         reverse_flag=args.reverse,
+        delay=args.delay,
     )
