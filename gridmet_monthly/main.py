@@ -1,31 +1,18 @@
 import argparse
-import calendar
-from datetime import date, datetime, timedelta, timezone
-import logging
+# import calendar
+from datetime import datetime, timedelta, timezone
 import os
-import pprint
+# import pprint
 import re
-import sys
 import time
 
 from dateutil.relativedelta import relativedelta
 import ee
 from flask import abort, Response
 
-if 'FUNCTION_REGION' in os.environ:
-    logging.debug(f'\nInitializing GEE using application default credentials')
-    import google.auth
-    credentials, project_id = google.auth.default(
-        default_scopes=['https://www.googleapis.com/auth/earthengine'])
-    ee.Initialize(credentials)
-else:
-    ee.Initialize()
-
-logging.getLogger("earthengine-api").setLevel(logging.INFO)
-logging.getLogger("googleapiclient").setLevel(logging.INFO)
-logging.getLogger('requests').setLevel(logging.INFO)
-logging.getLogger("urllib3").setLevel(logging.INFO)
-
+# V1
+# ASSET_COLL_ID = 'projects/earthengine-legacy/assets/' \
+#                 'projects/openet/meteorology/conus/gridmet/monthly'
 ASSET_COLL_ID = 'projects/earthengine-legacy/assets/' \
                 'projects/openet/meteorology/gridmet/monthly'
 SOURCE_COLL_ID = 'IDAHO_EPSCOR/GRIDMET'
@@ -36,6 +23,36 @@ VARIABLES = ['pr']
 # VARIABLES = ['eto', 'etr', 'pr']
 # VARIABLES = ['bi', 'erc', 'eto', 'etr', 'fm100', 'fm1000', 'pr', 'rmax',
 #              'rmin', 'sph', 'srad', 'th', 'tmmn', 'tmmx', 'vs', 'vpd']
+
+if 'FUNCTION_REGION' in os.environ:
+    # Logging is not working correctly in cloud functions for Python 3.8+
+    # Following workflow suggested in this issue:
+    # https://issuetracker.google.com/issues/124403972
+    import google.cloud.logging
+    log_client = google.cloud.logging.Client(project='openet')
+    log_client.setup_logging(log_level=20)
+    import logging
+    # CGM - Not sure if these lines are needed or not
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+else:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    logging.getLogger('earthengine-api').setLevel(logging.INFO)
+    logging.getLogger('googleapiclient').setLevel(logging.INFO)
+    logging.getLogger('requests').setLevel(logging.INFO)
+    logging.getLogger("urllib3").setLevel(logging.INFO)
+
+if 'FUNCTION_REGION' in os.environ:
+    logging.debug(f'\nInitializing GEE using application default credentials')
+    import google.auth
+    credentials, project_id = google.auth.default(
+        default_scopes=['https://www.googleapis.com/auth/earthengine']
+    )
+    ee.Initialize(credentials)
+else:
+    ee.Initialize()
 
 
 def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
@@ -57,15 +74,15 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
     end_date = end_dt.strftime('%Y-%m-%d')
     logging.info(f'Ingest GRIDMET monthly meteorology ({start_date} {end_date})')
 
-    export_name = f'openet_gridmet_monthly_meteorology_' \
-                  f'{start_dt.strftime("%Y%m%d")}'
+    export_name = f'openet_gridmet_meteorology_monthly_{start_dt.strftime("%Y%m%d")}'
     asset_id = f'{ASSET_COLL_ID}/{start_dt.strftime(ASSET_DT_FMT)}'
     # logging.debug(f'Image Collection: {ASSET_COLL_ID}')
     # logging.info(f'asset_id: {asset_id}')
 
     asset_geo = [
         0.041666666666666664, 0, -124.78749996666667,
-        0, -0.041666666666666664, 49.42083333333334]
+        0, -0.041666666666666664, 49.42083333333334
+    ]
     asset_crs = 'EPSG:4326'
     asset_dimensions = '1386x585'
     asset_geo_str = '[' + ','.join(list(map(str, asset_geo))) + ']'
@@ -107,9 +124,12 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
         .select(variables)
 
     # TODO: Come up with a way to do this server side to avoid the getInfo
-    status = ee.Dictionary({'permanent': 0, 'provisional': 0, 'early': 0})\
-        .combine(source_coll.aggregate_histogram('status'))\
+    #   or wrap in a try/except loop
+    status = (
+        ee.Dictionary({'permanent': 0, 'provisional': 0, 'early': 0})
+        .combine(source_coll.aggregate_histogram('status'))
         .getInfo()
+    )
 
     # TODO: Come up with a way to do this server side to avoid the getInfo above
     if status['early'] > 0:
@@ -169,7 +189,8 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
             assetId=asset_id,
             dimensions=asset_dimensions,
             crs=asset_crs,
-            crsTransform=asset_geo_str)
+            crsTransform=asset_geo_str,
+        )
     except Exception as e:
         logging.warning('Export task not built, skipping')
         return f'{export_name} - export task not built\n'
@@ -178,7 +199,7 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
     export_task.start()
 
     # # Try to start the task a couple of times
-    # for i in range(1, 6):
+    # for i in range(1, 4):
     #     try:
     #         export_task.start()
     #         break
@@ -187,7 +208,7 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
     #     except Exception as e:
     #         logging.warning(f'Unhandled Exception: {e}')
     #         return f'Unhandled Exception: {e}'
-    #     time.sleep(i ** 2)
+    #     time.sleep(i ** 3)
 
     logging.info(f'  {export_name} - {export_task.id}')
     return f'{export_name} - {export_task.id}\n'
@@ -242,9 +263,7 @@ def gridmet_monthly_asset_dates(start_dt, end_dt, overwrite_flag=False):
     logging.debug(f'\nTask dates: {", ".join(task_dates)}')
 
     # Switch date list to be dates that are missing
-    tgt_dt_list = [
-        dt for dt in tgt_dt_list if dt.strftime('%Y-%m-%d') not in task_dates
-    ]
+    tgt_dt_list = [dt for dt in tgt_dt_list if dt.strftime('%Y-%m-%d') not in task_dates]
     #     if overwrite_flag or dt.strftime('%Y-%m-%d') not in task_dates]
     if not tgt_dt_list:
         logging.info('No dates to process after checking ready/running tasks')
@@ -259,7 +278,8 @@ def gridmet_monthly_asset_dates(start_dt, end_dt, overwrite_flag=False):
     # asset_date_list = [
     #     datetime.strptime(m.group('date'), ASSET_DT_FMT).strftime('%Y-%m-%d')
     #     for asset_id in asset_id_list
-    #     for m in [asset_id_re.search(asset_id)] if m]
+    #     for m in [asset_id_re.search(asset_id)] if m
+    # ]
     # logging.debug(f'\nAsset dates: {", ".join(asset_date_list)}')
     #
     # # Switch date list to be dates that are missing
@@ -280,11 +300,12 @@ def gridmet_monthly_asset_dates(start_dt, end_dt, overwrite_flag=False):
     # # Since the jobs are run at 0 UTC, the local and UTC dates should be the same
     # today_dt = datetime.utcnow()
     # # today_dt = datetime.today()
-    # asset_id_list = ee.ImageCollection(ASSET_COLL_ID)\
-    #     .filterMetadata('date_ingested', 'equals',
-    #                     today_dt.strftime('%Y-%m-%d UTC'))\
-    #     .aggregate_array('system:index')\
+    # asset_id_list = (
+    #     ee.ImageCollection(ASSET_COLL_ID)
+    #     .filterMetadata('date_ingested', 'equals', today_dt.strftime('%Y-%m-%d UTC'))
+    #     .aggregate_array('system:index')
     #     .getInfo()
+    # )
     # asset_id_list = sorted(list(asset_id_list))
     # # logging.info(asset_id_list)
 
@@ -368,9 +389,7 @@ def cron_scheduler(request):
         end_dt = min(end_dt, datetime.today() - timedelta(days=1))
 
         # TODO: Force start date to be at least one month before end
-        # start_dt = min(
-        #     start_dt,
-        #     end_dt - relativedelta(months=1) + relativedelta(days=1))
+        # start_dt = min(start_dt, end_dt - relativedelta(months=1) + relativedelta(days=1))
 
         if start_dt > end_dt:
             abort(404, description='Start date must be before end date')
@@ -420,22 +439,22 @@ def get_ee_tasks(states=['RUNNING', 'READY'], verbose=False, retries=6):
     """
     logging.debug('\nRequesting Task List')
     task_list = None
-    for i in range(retries):
+    for i in range(1, retries):
         try:
             # TODO: getTaskList() is deprecated, switch to listOperations()
             task_list = ee.data.getTaskList()
             # task_list = ee.data.listOperations()
             break
         except Exception as e:
-            logging.warning(
-                f'  Error getting task list, retrying ({i}/{retries})\n  {e}')
-            time.sleep((i+1) ** 2)
+            logging.warning(f'  Error getting task list, retrying ({i}/{retries})\n  {e}')
+            time.sleep(i ** 3)
     if task_list is None:
         raise Exception('\nUnable to retrieve task list, exiting')
 
     task_list = sorted(
         [task for task in task_list if task['state'] in states],
-        key=lambda t: (t['state'], t['description'], t['id']))
+        key=lambda t: (t['state'], t['description'], t['id'])
+    )
     # task_list = sorted([
     #     [t['state'], t['description'], t['id']] for t in task_list
     #     if t['state'] in states])
