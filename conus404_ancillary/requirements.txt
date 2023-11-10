@@ -1,0 +1,6 @@
+earthengine-api
+google-cloud-storage
+numpy
+pydap
+rasterio
+scikit-image

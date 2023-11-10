@@ -4,7 +4,7 @@ CONUS404 daily meteorology Earth Engine assets.
 
 ## Assets
 
-Collection ID: projects/openet/meteorology/conus404/daily
+Collection ID: projects/openet/meteorology/conus/conus404/daily
 
 Image name format: YYYYMMDD
 
@@ -32,7 +32,7 @@ Reference ET was computed from the daily aggregated values (i.e. NOT as the sum 
 
 ## Availability
 
-CONUS404 is available for 1979-10-01 to 2020-09-30.
+CONUS404 is available for 1979-10-01 to 2022-09-30.
 
 ## Update Schedule
 
@@ -52,7 +52,7 @@ The "conus404_daily_zarr.py" script can be used to build assets from the zarr da
 
 ### UCAR
 
-The data is also available via a UCAR THREDDS server.  The current limitation with this approach is that the data is still being ingested from Globus and is only available for 1980-1993 (as of 2023-07-01).
+The data is also available via a UCAR THREDDS server.
 
 https://rda.ucar.edu/datasets/ds559.0/dataaccess/
 https://thredds.rda.ucar.edu/thredds/catalog/files/g/ds559.0/catalog.html
