@@ -116,10 +116,16 @@ TOOL_VERSION = '0.1.1'
 ee.Initialize()
 
 
-def main(start_dt, end_dt, variables,
-         # download_flag=False, upload_flag=False,
-         workspace='/tmp', overwrite_flag=False, reverse_flag=False, delay=0,
-    ):
+def main(
+        start_dt,
+        end_dt,
+        variables,
+        # download_flag=False, upload_flag=False,
+        workspace='/tmp',
+        overwrite_flag=False,
+        reverse_flag=False,
+        delay=0,
+        ):
     """"""
 
     logging.info('CONUS404 Daily Asset Ingest')
@@ -163,12 +169,19 @@ def main(start_dt, end_dt, variables,
 
 
 def conus404_daily_asset_ingest(
-        tgt_dt, variables, workspace, elevation=None, latitude=None,
-        longitude=None, mask=None, overwrite_flag=False,
-    ):
+        tgt_dt,
+        variables,
+        workspace,
+        elevation=None,
+        latitude=None,
+        longitude=None,
+        mask=None,
+        overwrite_flag=False,
+        ):
     """"""
     logging.info(f'{tgt_dt}')
-    time_start = time.time()
+
+    # time_start = time.time()
 
     # TODO: Work on restructuring variable mappings to make it more readable
     #   and easier to support other aggregations and variables

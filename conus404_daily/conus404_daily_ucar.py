@@ -171,6 +171,8 @@ def conus404_daily_asset_ingest(
     """"""
     logging.info(f'{tgt_dt}')
 
+    # time_start = time.time()
+
     # TODO: Work on restructuring variable mappings to make it more readable
     #   and easier to support other aggregations and variables
     refet_vars = ['T2_MAX', 'T2_MIN', 'TD2', 'WIND10', 'ACSWDNB']
@@ -291,7 +293,7 @@ def conus404_daily_asset_ingest(
         # Iterate one extra hour to get the final solar accumulation
         # This extra time step will be dropped below
         for hour_i, hour_dt in enumerate(datetime_range(start_dt, end_dt, hours=1)):
-            logging.debug(f'  Hour: {hour_dt}')
+            logging.info(f'  Hour: {hour_dt}')
             wy = (datetime(hour_dt.year, hour_dt.month, 1) + timedelta(days=100)).year
             nc_url = f'{NC_URL}/wy{wy}/{hour_dt.strftime("%Y%m")}/' \
                      f'wrf2d_d01_{hour_dt.strftime("%Y-%m-%d_%H")}:00:00.nc'
@@ -300,7 +302,7 @@ def conus404_daily_asset_ingest(
             #   I don't seem to need a session parameter
             #   Passing the variable in the URL didn't seem any faster
             try:
-                nc_ds = open_url(nc_url, timeout=120)
+                nc_ds = open_url(nc_url, timeout=60)
                 # nc_ds = open_url(nc_url, session=session, timeout=120)
                 # nc_ds = open_url(f'{nc_url}?{variable}', timeout=120)
             except Exception as e:
@@ -334,7 +336,7 @@ def conus404_daily_asset_ingest(
         # Read the solar accumulation values
         # for hour_i, hour_dt in enumerate(datetime_range(start_dt, end_dt + timedelta(hours=1), hours=1)):
         for hour_i, hour_dt in enumerate([start_dt, end_dt]):
-            logging.debug(f'  Hour: {hour_dt} - accumulation variables')
+            logging.info(f'  Hour: {hour_dt} - accumulation variables')
             wy = (datetime(hour_dt.year, hour_dt.month, 1) + timedelta(days=100)).year
             nc_url = f'{NC_URL}/wy{wy}/{hour_dt.strftime("%Y%m")}/' \
                      f'wrf2d_d01_{hour_dt.strftime("%Y-%m-%d_%H")}:00:00.nc'

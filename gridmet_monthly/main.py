@@ -23,6 +23,8 @@ VARIABLES = ['pr']
 # VARIABLES = ['eto', 'etr', 'pr']
 # VARIABLES = ['bi', 'erc', 'eto', 'etr', 'fm100', 'fm1000', 'pr', 'rmax',
 #              'rmin', 'sph', 'srad', 'th', 'tmmn', 'tmmx', 'vs', 'vpd']
+TODAY_DT = datetime.today()
+# TODAY_DT = datetime.now(timezone=timezone.utc)
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+
@@ -140,7 +142,7 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
         status_summary = 'permanent'
 
     properties = {
-        'date_ingested': datetime.today().strftime('%Y-%m-%d'),
+        'date_ingested': TODAY_DT.strftime('%Y-%m-%d'),
         'month': int(start_dt.month),
         'year': int(start_dt.year),
         'early': status['early'],
@@ -298,11 +300,9 @@ def gridmet_monthly_asset_dates(start_dt, end_dt, overwrite_flag=False):
     # #   some limit on how often the ingest can be run
     # # Get the image IDs "current" images (have the same date_ingested as today)
     # # Since the jobs are run at 0 UTC, the local and UTC dates should be the same
-    # today_dt = datetime.utcnow()
-    # # today_dt = datetime.today()
     # asset_id_list = (
     #     ee.ImageCollection(ASSET_COLL_ID)
-    #     .filterMetadata('date_ingested', 'equals', today_dt.strftime('%Y-%m-%d UTC'))
+    #     .filterMetadata('date_ingested', 'equals', TODAY_DT.strftime('%Y-%m-%d UTC'))
     #     .aggregate_array('system:index')
     #     .getInfo()
     # )
@@ -369,10 +369,9 @@ def cron_scheduler(request):
         end_date = None
 
     if not start_date and not end_date:
-        today = datetime.today()
-        start_dt = (datetime(today.year, today.month, 1) -
+        start_dt = (datetime(TODAY_DT.year, TODAY_DT.month, 1) -
                     relativedelta(months=START_MONTH_OFFSET))
-        end_dt = (datetime(today.year, today.month, 1) - relativedelta(days=1) -
+        end_dt = (datetime(TODAY_DT.year, TODAY_DT.month, 1) - relativedelta(days=1) -
                   relativedelta(days=END_MONTH_OFFSET))
     elif start_date and end_date:
         # Only process custom range if start and end are both set
@@ -386,7 +385,7 @@ def cron_scheduler(request):
             abort(404, description=response)
 
         # Force end date to be last day of previous month
-        end_dt = min(end_dt, datetime.today() - timedelta(days=1))
+        end_dt = min(end_dt, TODAY_DT - timedelta(days=1))
 
         # TODO: Force start date to be at least one month before end
         # start_dt = min(start_dt, end_dt - relativedelta(months=1) + relativedelta(days=1))
@@ -516,19 +515,17 @@ def arg_valid_file(file_path):
 
 def arg_parse():
     """"""
-    today = datetime.today()
-
     parser = argparse.ArgumentParser(
         description='Generate GRIDMET monthly assets',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--start', type=arg_valid_date, metavar='YYYY-MM-DD',
-        default=(datetime(today.year, today.month, 1) -
+        default=(datetime(TODAY_DT.year, TODAY_DT.month, 1) -
                  relativedelta(months=START_MONTH_OFFSET)).strftime('%Y-%m-%d'),
         help='Start date')
     parser.add_argument(
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
-        default=(datetime(today.year, today.month, 1) - relativedelta(days=1) -
+        default=(datetime(TODAY_DT.year, TODAY_DT.month, 1) - relativedelta(days=1) -
                  relativedelta(months=END_MONTH_OFFSET)).strftime('%Y-%m-%d'),
         help='End date (inclusive)')
     parser.add_argument(
