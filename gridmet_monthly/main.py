@@ -34,7 +34,6 @@ if 'FUNCTION_REGION' in os.environ:
     log_client = google.cloud.logging.Client(project='openet')
     log_client.setup_logging(log_level=20)
     import logging
-    # CGM - Not sure if these lines are needed or not
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -74,7 +73,7 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
     end_dt = start_dt + relativedelta(months=1)
     start_date = start_dt.strftime('%Y-%m-%d')
     end_date = end_dt.strftime('%Y-%m-%d')
-    logging.info(f'Ingest GRIDMET monthly meteorology ({start_date} {end_date})')
+    logging.info(f'Build GRIDMET monthly meteorology asset ({start_date} {end_date})')
 
     export_name = f'openet_gridmet_meteorology_monthly_{start_dt.strftime("%Y%m%d")}'
     asset_id = f'{ASSET_COLL_ID}/{start_dt.strftime(ASSET_DT_FMT)}'
@@ -121,9 +120,11 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
             return f'{export_name} - The asset already exists and overwrite '\
                    f'is False, skipping\n'
 
-    source_coll = ee.ImageCollection(SOURCE_COLL_ID)\
-        .filterDate(start_date, end_date)\
+    source_coll = (
+        ee.ImageCollection(SOURCE_COLL_ID)
+        .filterDate(start_date, end_date)
         .select(variables)
+    )
 
     # TODO: Come up with a way to do this server side to avoid the getInfo
     #   or wrap in a try/except loop
@@ -162,9 +163,11 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
     var_img_list = []
     for var in variables:
         logging.debug(f'  Variable: {var}')
-        var_coll = ee.ImageCollection(SOURCE_COLL_ID)\
-            .filterDate(start_date, end_date)\
+        var_coll = (
+            ee.ImageCollection(SOURCE_COLL_ID)
+            .filterDate(start_date, end_date)
             .select([var])
+        )
 
         for stat in var_stats[var]:
             logging.debug(f'    Stat: {stat}')
@@ -348,7 +351,7 @@ def cron_scheduler(request):
     `make_response <http://flask.pocoo.org/docs/1.0/api/#flask.Flask.make_response>`.
 
     """
-    response = 'Generate Monthly Bias Corrected GRIDMET Reference ET Images\n'
+    response = 'Queue monthly GRIDMET meteorology asset export tasks\n'
 
     request_json = request.get_json(silent=True)
     request_args = request.args
