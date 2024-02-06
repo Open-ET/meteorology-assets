@@ -1,9 +1,11 @@
-# ERA5-Land Daily Asset
+# ERA5-Land Daily Meteorology Assets
 
 ERA5-Land daily meteorology Earth Engine assets.
 
 ## Assets
 
+Collection ID: projects/openet/assets/meteorology/era5land/na/daily
+Collection ID: projects/openet/assets/meteorology/era5land/sa/daily
 Collection ID: projects/openet/assets/meteorology/era5land/daily
 
 Timestep: daily

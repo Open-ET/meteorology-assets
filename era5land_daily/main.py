@@ -11,18 +11,15 @@ import time
 import ee
 from flask import abort, Response
 from google.cloud import storage
+from importlib import metadata
 import openet.refetgee
 
-try:
-    from importlib import metadata
-except ImportError:  # for Python<3.8
-    import importlib_metadata as metadata
 
 # The full path/ID will be "projects/openet/meteorology/<dataset>/<region>/<timestep>"
 ASSET_FOLDER = 'projects/openet/assets/meteorology/era5land'
 ASSET_DT_FMT = '%Y%m%d'
-BUCKET_NAME = 'openet_assets'
-BUCKET_FOLDER = 'meteorology/era5land'
+# _NAME = 'openet_assets'
+# BUCKET_FOLDER = 'meteorology/era5land'
 PROJECT_NAME = 'openet'
 REGIONS = ['global', 'na', 'sa']
 SOURCE_COLL_ID = 'ECMWF/ERA5_LAND/HOURLY'
@@ -59,7 +56,7 @@ else:
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
     logging.getLogger('googleapiclient').setLevel(logging.INFO)
     logging.getLogger('requests').setLevel(logging.INFO)
-    logging.getLogger("urllib3").setLevel(logging.INFO)
+    logging.getLogger('urllib3').setLevel(logging.INFO)
 
 if 'FUNCTION_REGION' in os.environ:
     SCOPES = [
@@ -90,17 +87,18 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
     if not region or region.lower() == 'global':
         logging.info(f'Export ERA5-Land {TIMESTEP} image - {tgt_dt.strftime("%Y-%m-%d")}')
         export_name = f'openet_meteo_era5land_{TIMESTEP}_{tgt_dt.strftime("%Y%m%d")}'
-        bucket_img = f'{BUCKET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # bucket_img = f'{BUCKET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
+        # bucket_json = bucket_img.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}'
     else:
         logging.info(f'Export ERA5-Land {TIMESTEP} image - {region} - '
                      f'{tgt_dt.strftime("%Y-%m-%d")}')
         logging.debug(f'  Region: {region}')
         export_name = f'openet_meteo_era5land_{region}_{TIMESTEP}_{tgt_dt.strftime("%Y%m%d")}'
-        bucket_img = f'{BUCKET_FOLDER}/{region}/{TIMESTEP}/' \
-                     f'{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # bucket_img = f'{BUCKET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
+        # bucket_json = bucket_img.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}'
     # logging.info(f'export_id:   {export_name}')
     # logging.info(f'bucket_img:  {bucket_img}')
@@ -110,10 +108,11 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
     try:
         asset_info = ee.data.getInfo(asset_id)
     except ee.ee_exception.EEException:
-        logging.info('  EEException reading COG backed asset, removing')
-        delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
-        asset_info = None
-        # return f'{export_name} - EEException on getInfo call, skipping'
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # logging.info('  EEException reading COG backed asset, removing')
+        # delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
+        # asset_info = None
+        return f'{export_name} - EEException on getInfo call, skipping'
     except:
         return f'{export_name} - Unhandled exception on getInfo call, skipping'
 
@@ -121,8 +120,9 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
         if overwrite_flag:
             logging.info('  Removing existing asset')
             try:
-                delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
-                # ee.data.deleteAsset(asset_id)
+                ee.data.deleteAsset(asset_id)
+                # DEADBEEF - No longer saving ERA5-Land assets as COGs
+                # delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
             except Exception as e:
                 logging.info('  Error deleting asset, skipping')
                 logging.info(f'{e}')
@@ -266,19 +266,33 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
         .unmask(NODATA)
     )
 
-    task = ee.batch.Export.image.toCloudStorage(
-        image=output_img,
-        description=export_name,
-        bucket=BUCKET_NAME,
-        fileNamePrefix=bucket_img.replace('.tif', ''),
-        dimensions='{}x{}'.format(width, height),
-        crs=crs,
-        crsTransform='[' + ', '.join(map(str, transform)) + ']',
-        fileFormat='GeoTIFF',
-        formatOptions={'cloudOptimized': True, 'noData': NODATA},
-        # maxPixels=int(1E10),
-        # pyramidingPolicy='mean',
-    )
+    try:
+        task = ee.batch.Export.image.toAsset(
+            image=output_img,
+            description=export_name,
+            assetId=asset_id,
+            dimensions='{}x{}'.format(width, height),
+            crs=crs,
+            crsTransform='[' + ', '.join(map(str, transform)) + ']',
+            # maxPixels=int(1E10),
+            # pyramidingPolicy='mean',
+        )
+        # task = ee.batch.Export.image.toCloudStorage(
+        #     image=output_img,
+        #     description=export_name,
+        #     bucket=BUCKET_NAME,
+        #     fileNamePrefix=bucket_img.replace('.tif', ''),
+        #     dimensions='{}x{}'.format(width, height),
+        #     crs=crs,
+        #     crsTransform='[' + ', '.join(map(str, transform)) + ']',
+        #     fileFormat='GeoTIFF',
+        #     formatOptions={'cloudOptimized': True, 'noData': NODATA},
+        #     # maxPixels=int(1E10),
+        #     # pyramidingPolicy='mean',
+        # )
+    except Exception as e:
+        logging.warning('Export task not built, skipping')
+        return f'{export_name} - export task not built\n'
 
     # Try to start the task a couple of times
     for i in range(1, 4):
@@ -292,11 +306,12 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
             return f'{export_name} - Unhandled Exception: {e}\n'
         time.sleep(i ** 3)
 
-    # logging.debug(f'Writing properties JSON to bucket')
-    # TODO: Wrap in try/except loop
-    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
-    blob = bucket.blob(bucket_json)
-    blob.upload_from_string(json.dumps(properties))
+    # DEADBEEF - No longer saving ERA5-Land assets as COGs
+    # # logging.debug(f'Writing properties JSON to bucket')
+    # # TODO: Wrap in try/except loop
+    # bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
+    # blob = bucket.blob(bucket_json)
+    # blob.upload_from_string(json.dumps(properties))
 
     logging.info(f'  {export_name} - {task.id}')
     return f'{export_name} - {task.id}\n'
@@ -692,20 +707,21 @@ def get_ee_tasks(states=['RUNNING', 'READY'], verbose=False, retries=6):
 #     return ready_task_count
 
 
-def delete_cog_asset(asset_id, bucket_name, bucket_img, bucket_json=None):
-    # Always remove the EE asset before deleting the bucket files
-    ee.data.deleteAsset(asset_id)
-
-    bucket = STORAGE_CLIENT.get_bucket(bucket_name)
-    img_blob = bucket.blob(bucket_img)
-    if img_blob.exists():
-        img_blob.delete()
-
-    if bucket_json is None:
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
-    json_blob = bucket.blob(bucket_json)
-    if json_blob.exists():
-        json_blob.delete()
+# DEADBEEF - No longer saving ERA5-Land assets as COGs
+# def delete_cog_asset(asset_id, bucket_name, bucket_img, bucket_json=None):
+#     # Always remove the EE asset before deleting the bucket files
+#     ee.data.deleteAsset(asset_id)
+#
+#     bucket = STORAGE_CLIENT.get_bucket(bucket_name)
+#     img_blob = bucket.blob(bucket_img)
+#     if img_blob.exists():
+#         img_blob.delete()
+#
+#     if bucket_json is None:
+#         bucket_json = bucket_img.replace('.tif', '_properties.json')
+#     json_blob = bucket.blob(bucket_json)
+#     if json_blob.exists():
+#         json_blob.delete()
 
 
 def arg_valid_date(input_date):

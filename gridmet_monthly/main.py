@@ -43,7 +43,7 @@ else:
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
     logging.getLogger('googleapiclient').setLevel(logging.INFO)
     logging.getLogger('requests').setLevel(logging.INFO)
-    logging.getLogger("urllib3").setLevel(logging.INFO)
+    logging.getLogger('urllib3').setLevel(logging.INFO)
 
 if 'FUNCTION_REGION' in os.environ:
     logging.debug(f'\nInitializing GEE using application default credentials')

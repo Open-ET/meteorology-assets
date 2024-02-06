@@ -16,8 +16,8 @@ from google.cloud import storage
 # The full path/ID is "projects/openet/meteorology/<dataset>/<region>/<timestep>"
 ASSET_FOLDER = 'projects/openet/assets/meteorology/era5land'
 ASSET_DT_FMT = '%Y%m'
-BUCKET_NAME = 'openet_assets'
-BUCKET_FOLDER = 'meteorology/era5land'
+# BUCKET_NAME = 'openet_assets'
+# BUCKET_FOLDER = 'meteorology/era5land'
 PROJECT_NAME = 'openet'
 REGIONS = ['global', 'na', 'sa']
 SOURCE_FOLDER = 'projects/openet/assets/meteorology/era5land'
@@ -54,7 +54,7 @@ else:
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
     logging.getLogger('googleapiclient').setLevel(logging.INFO)
     logging.getLogger('requests').setLevel(logging.INFO)
-    logging.getLogger("urllib3").setLevel(logging.INFO)
+    logging.getLogger('urllib3').setLevel(logging.INFO)
 
 if 'FUNCTION_REGION' in os.environ:
     logging.debug(f'\nInitializing GEE using application default credentials')
@@ -86,25 +86,25 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
         logging.info(f'Export ERA5-Land {TIMESTEP.lower()} image - {tgt_dt.strftime("%Y-%m-%d")}')
         source_coll_id = f'{SOURCE_FOLDER}/{SOURCE_TIMESTEP.lower()}'
         export_name = f'openet_meteo_era5land_{TIMESTEP.lower()}_{tgt_dt.strftime("%Y%m%d")}'
-        bucket_img = f'{BUCKET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # bucket_img = f'{BUCKET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
+        # bucket_json = bucket_img.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_FOLDER}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}'
     else:
         logging.info(f'Export ERA5-Land {TIMESTEP.lower()} image - {region} - '
                      f'{tgt_dt.strftime("%Y-%m-%d")}')
         logging.debug(f'  Region: {region}')
         source_coll_id = f'{SOURCE_FOLDER}/{region}/{SOURCE_TIMESTEP.lower()}'
-        export_name = f'openet_meteo_era5land_{region}_{TIMESTEP.lower()}_' \
-                      f'{tgt_dt.strftime("%Y%m%d")}'
-        bucket_img = f'{BUCKET_FOLDER}/{region}/{TIMESTEP}/' \
-                     f'{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
+        export_name = f'openet_meteo_era5land_{region}_{TIMESTEP.lower()}_{tgt_dt.strftime("%Y%m%d")}'
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # bucket_img = f'{BUCKET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
+        # bucket_json = bucket_img.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}'
-    logging.info(f'source_id:   {source_coll_id}')
-    logging.info(f'export_id:   {export_name}')
-    logging.info(f'bucket_img:  {bucket_img}')
-    logging.info(f'bucket_json: {bucket_json}')
-    logging.info(f'asset_id:    {asset_id}')
+    logging.info(f'  source_id:   {source_coll_id}')
+    logging.info(f'  export_id:   {export_name}')
+    # logging.info(f'  bucket_img:  {bucket_img}')
+    # logging.info(f'  bucket_json: {bucket_json}')
+    logging.info(f'  asset_id:    {asset_id}')
 
     start_date = tgt_dt.strftime('%Y-%m-%d')
     end_date = (tgt_dt + relativedelta(months=1)).strftime('%Y-%m-%d')
@@ -194,18 +194,20 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
     try:
         asset_info = ee.data.getInfo(asset_id)
     except ee.ee_exception.EEException:
-        logging.info('  EEException reading COG backed asset, removing')
-        delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
-        asset_info = None
-        # return f'{export_name} - EEException on getInfo call, skipping'
+        # DEADBEEF - No longer saving ERA5-Land assets as COGs
+        # logging.info('  EEException reading COG backed asset, removing')
+        # delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
+        # asset_info = None
+        return f'{export_name} - EEException on getInfo call, skipping'
     except:
         return f'{export_name} - Unhandled exception on getInfo call, skipping'
 
     if asset_info:
         if overwrite_flag:
             try:
-                delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
-                # ee.data.deleteAsset(asset_id)
+                ee.data.deleteAsset(asset_id)
+                # DEADBEEF - No longer saving ERA5-Land assets as COGs
+                # delete_cog_asset(asset_id, BUCKET_NAME, bucket_img, bucket_json)
             except Exception as e:
                 logging.info(f'  Error deleting asset, skipping\n{e}')
                 return f'{export_name} - Error deleting asset, skipping\n  {e}\n'
@@ -252,19 +254,19 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
     output_img = ee.Image(var_img_list).set(properties)
 
     try:
-        task = ee.batch.Export.image.toCloudStorage(
+        task = ee.batch.Export.image.toAsset(
             image=output_img,
             description=export_name,
-            bucket=BUCKET_NAME,
-            fileNamePrefix=bucket_img.replace('.tif', ''),
+            assetId=asset_id,
             dimensions=dimensions,
             crs=crs,
             crsTransform='[' + ', '.join(map(str, transform)) + ']',
         )
-        # export_task = ee.batch.Export.image.toAsset(
+        # task = ee.batch.Export.image.toCloudStorage(
         #     image=output_img,
         #     description=export_name,
-        #     assetId=asset_id,
+        #     bucket=BUCKET_NAME,
+        #     fileNamePrefix=bucket_img.replace('.tif', ''),
         #     dimensions=dimensions,
         #     crs=crs,
         #     crsTransform='[' + ', '.join(map(str, transform)) + ']',
@@ -285,11 +287,12 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
             return f'{export_name} - Unhandled Exception: {e}\n'
         time.sleep(i ** 3)
 
-    # logging.debug(f'Writing properties JSON to bucket')
-    # TODO: Wrap in try/except loop
-    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
-    blob = bucket.blob(bucket_json)
-    blob.upload_from_string(json.dumps(properties))
+    # DEADBEEF - No longer saving ERA5-Land assets as COGs
+    # # logging.debug(f'Writing properties JSON to bucket')
+    # # TODO: Wrap in try/except loop
+    # bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
+    # blob = bucket.blob(bucket_json)
+    # blob.upload_from_string(json.dumps(properties))
 
     logging.info(f'  {export_name} - {task.id}')
     return f'{export_name} - {task.id}\n'
@@ -668,20 +671,21 @@ def millis(input_dt):
     # return 1000 * long(time.mktime(input_dt.timetuple()))
 
 
-def delete_cog_asset(asset_id, bucket_name, bucket_img, bucket_json=None):
-    # Always remove the EE asset before deleting the bucket files
-    ee.data.deleteAsset(asset_id)
-
-    bucket = STORAGE_CLIENT.get_bucket(bucket_name)
-    img_blob = bucket.blob(bucket_img)
-    if img_blob.exists():
-        img_blob.delete()
-
-    if bucket_json is None:
-        bucket_json = bucket_img.replace('.tif', '_properties.json')
-    json_blob = bucket.blob(bucket_json)
-    if json_blob.exists():
-        json_blob.delete()
+# DEADBEEF - No longer saving ERA5-Land assets as COGs
+# def delete_cog_asset(asset_id, bucket_name, bucket_img, bucket_json=None):
+#     # Always remove the EE asset before deleting the bucket files
+#     ee.data.deleteAsset(asset_id)
+#
+#     bucket = STORAGE_CLIENT.get_bucket(bucket_name)
+#     img_blob = bucket.blob(bucket_img)
+#     if img_blob.exists():
+#         img_blob.delete()
+#
+#     if bucket_json is None:
+#         bucket_json = bucket_img.replace('.tif', '_properties.json')
+#     json_blob = bucket.blob(bucket_json)
+#     if json_blob.exists():
+#         json_blob.delete()
 
 
 def arg_valid_date(input_date):
@@ -728,7 +732,7 @@ def arg_valid_file(file_path):
 def arg_parse():
     """"""
     parser = argparse.ArgumentParser(
-        description='Generate GRIDMET monthly assets',
+        description='Generate ERA5-Land monthly assets',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--start', type=arg_valid_date, metavar='YYYY-MM-DD',
@@ -744,7 +748,7 @@ def arg_parse():
         '--region', default='na', choices=REGIONS, help='Region')
     # parser.add_argument(
     #     '--variables', nargs='+', metavar='VAR', default=['pr'],
-    #     choices=VARIABLES, help='GRIDMET variables')
+    #     choices=VARIABLES, help='ERA5-Land variables')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
