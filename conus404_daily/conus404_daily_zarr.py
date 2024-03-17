@@ -1,7 +1,6 @@
 import argparse
 from datetime import datetime, timedelta, timezone
 import importlib_metadata
-# import importlib.metadata
 import json
 import logging
 import os
@@ -34,9 +33,7 @@ import refet
 # logging.getLogger('xarray').setLevel(logging.WARNING)
 # logging.getLogger('zarr').setLevel(logging.WARNING)
 
-# CGM - Switching to native assets for now until COG projection issue is worked out
-ASSET_COLL_ID = 'projects/earthengine-legacy/assets/projects/openet/meteorology/conus/conus404/daily'
-# ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily'
+ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily'
 BUCKET_NAME = 'openet_assets'
 BUCKET_FOLDER = 'meteorology/conus404/daily'
 # ASSET_COLL_ID = 'projects/openet/assets/meteorology/conus404/daily_zarr'

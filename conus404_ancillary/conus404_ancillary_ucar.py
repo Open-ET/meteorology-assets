@@ -21,9 +21,7 @@ logging.getLogger('rasterio').setLevel(logging.WARNING)
 # logging.getLogger('requests').setLevel(logging.INFO)
 # logging.getLogger('urllib3').setLevel(logging.INFO)
 
-# CGM - Switching to native assets for now until COG projection issue is worked out
-ASSET_FOLDER = 'projects/earthengine-legacy/assets/projects/openet/meteorology/conus/conus404'
-# ASSET_FOLDER = 'projects/openet/assets/meteorology/conus404'
+ASSET_FOLDER = 'projects/openet/assets/meteorology/conus404'
 PROJECT_NAME = 'openet'
 BUCKET_NAME = 'openet_temp'
 BUCKET_FOLDER = 'meteorology/conus404/ancillary'
