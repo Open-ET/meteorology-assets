@@ -1,9 +1,6 @@
 import argparse
 from datetime import datetime, timedelta, timezone
-import json
-# import logging
 import os
-import pprint
 import re
 import sys
 import time
@@ -13,7 +10,6 @@ from flask import abort, Response
 from google.cloud import storage
 from importlib import metadata
 import openet.refetgee
-
 
 # The full path/ID will be "projects/openet/meteorology/<dataset>/<region>/<timestep>"
 ASSET_FOLDER = 'projects/openet/assets/meteorology/era5land'

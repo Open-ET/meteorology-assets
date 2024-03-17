@@ -58,7 +58,7 @@ gcloud config set project openet
 ### Deploying the cloud function
 
 ```
-gcloud functions deploy era5land-meteorology-daily --project openet --runtime python311 --entry-point cron_scheduler --trigger-http --memory 512 --timeout 540 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --allow-unauthenticated --set-env-vars FUNCTION_REGION=us-central1
+gcloud functions deploy era5land-meteorology-daily --project openet --no-gen2 --runtime python311 --entry-point cron_scheduler --trigger-http --memory 512 --timeout 540 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --allow-unauthenticated --set-env-vars FUNCTION_REGION=us-central1
 ```
 
 ### Calling the cloud function
