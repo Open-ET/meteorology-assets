@@ -1,0 +1,89 @@
+# Spatial CIMIS Daily Asset
+
+Spatial CIMIS is currently being ingested as Earth Engine assets using cloud functions.
+
+## Assets
+
+Collection ID: projects/openet/meteorology/cimis/daily
+
+Bands: Tn, Tx, Tdew, Rs, Rso, Rnl, U2, ETo
+
+Image name format: YYYYMMDD
+
+Timestep: daily
+
+## Availability
+
+The full spatial CIMIS data is available from 2004-01-01 to the present.  There is partial data from 2003-02-20 to 2003-12-31, but there are numerous days missing in this time period and only some of the variables are present.
+
+## Update Schedule
+
+The image for the previous day is typically available on the server in the early morning, sometime between 3 and 4 AM PT.
+
+The ingest scheduler function is called at 12 UTC each day.
+
+## Source
+
+The spatial CIMIS data is currently being read from the California DWR website (https://spatialcimis.water.ca.gov/cimis).
+
+Spatial CIMIS data is also available on the UC Davis website (http://cimis.casil.ucdavis.edu/cimis), but this data stopped being updated in 2019 and is not being used for this asset.
+
+## Cloud Functions
+
+The asset ingest is currently being managed using Google Cloud Functions
+
+https://console.cloud.google.com/functions/details/us-central1/cimis-meteorology-daily-scheduler?project=openet
+https://console.cloud.google.com/functions/details/us-central1/cimis-meteorology-daily-worker?project=openet
+
+The cloud functions are called by the Cloud Scheduler:
+https://console.cloud.google.com/cloudscheduler?project=openet
+
+The function calls are routed through a Cloud Task Queue:
+https://console.cloud.google.com/cloudtasks/queue/us-central1/ee-assets-slow/tasks?project=openet
+
+### Deploying the cloud function
+
+Before deploying or calling the cloud functions, the "project" can be set once with the following call, or passed to each gcloud call.
+```
+gcloud config set project openet
+```
+
+The following are the parameters that were set when deploying the function for the first time.  Subsequent deployments only need the project if not set above.
+
+```
+gcloud functions deploy cimis-meteorology-daily-scheduler --project openet --runtime python311 --region us-central1 --entry-point cron_scheduler --trigger-http --allow-unauthenticated --memory 512 --timeout 240 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --set-env-vars FUNCTION_REGION=us-central1
+
+gcloud functions deploy cimis-meteorology-daily-worker --project openet --runtime python311 --region us-central1 --entry-point cron_worker --trigger-http --allow-unauthenticated --memory 512 --timeout 240 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --set-env-vars FUNCTION_REGION=us-central1
+```
+
+### Calling the cloud function
+
+The functions can be called by passing JSON data to the function.
+```
+gcloud functions call cimis-meteorology-daily-worker --project openet --data '{"date":"2020-09-01"}'
+gcloud functions call cimis-meteorology-daily-scheduler --project openet --data '{"start":"2020-11-01","end":"2020-11-05"}'
+gcloud functions call cimis-meteorology-daily-scheduler --project openet --data '{"days":"60"}'
+```
+
+If no arguments are passed to the scheduler it will check the last year for missing assets.
+```
+gcloud functions call cimis-meteorology-daily-scheduler --project openet
+```
+
+### Scheduling the job
+
+```
+gcloud scheduler jobs update http cimis-meteorology-daily --schedule "10 12 * * *" --uri "https://us-central1-openet.cloudfunctions.net/cimis-meteorology-daily-scheduler?days=60" --description "Spatial CIMIS Daily Metorology Assets" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
+```
+
+### Create tasks queue
+
+The following command was used to create a "slow" task queue that will only run one task at a time.  This was done to limit the number of simultaneous requests to Earth Engine.
+```
+gcloud tasks queues create ee-single-worker --max-concurrent-dispatches=1 --max-dispatches-per-second=1 --project openet
+```
+
+The max-burst-size parameter is not currently adjustable from the GCloud CLI, but it may be in the future.
+```
+--max-burst-size=1
+```
