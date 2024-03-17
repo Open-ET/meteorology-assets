@@ -1,8 +1,6 @@
 import argparse
-# import calendar
 from datetime import datetime, timedelta, timezone
 import os
-# import pprint
 import re
 import time
 
@@ -10,17 +8,12 @@ from dateutil.relativedelta import relativedelta
 import ee
 from flask import abort, Response
 
-# V1
-# ASSET_COLL_ID = 'projects/earthengine-legacy/assets/' \
-#                 'projects/openet/meteorology/conus/gridmet/monthly'
-ASSET_COLL_ID = 'projects/earthengine-legacy/assets/' \
-                'projects/openet/meteorology/gridmet/monthly'
+ASSET_COLL_ID = 'projects/openet/assets/meteorology/gridmet/monthly'
 SOURCE_COLL_ID = 'IDAHO_EPSCOR/GRIDMET'
 ASSET_DT_FMT = '%Y%m'
 START_MONTH_OFFSET = 3
 END_MONTH_OFFSET = 0
-VARIABLES = ['pr']
-# VARIABLES = ['eto', 'etr', 'pr']
+VARIABLES = ['eto', 'etr', 'pr']
 # VARIABLES = ['bi', 'erc', 'eto', 'etr', 'fm100', 'fm1000', 'pr', 'rmax',
 #              'rmin', 'sph', 'srad', 'th', 'tmmn', 'tmmx', 'vs', 'vpd']
 TODAY_DT = datetime.today()
@@ -39,7 +32,7 @@ if 'FUNCTION_REGION' in os.environ:
     logger.setLevel(logging.INFO)
 else:
     import logging
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    # logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
     logging.getLogger('googleapiclient').setLevel(logging.INFO)
     logging.getLogger('requests').setLevel(logging.INFO)
@@ -459,7 +452,8 @@ def get_ee_tasks(states=['RUNNING', 'READY'], verbose=False, retries=6):
     )
     # task_list = sorted([
     #     [t['state'], t['description'], t['id']] for t in task_list
-    #     if t['state'] in states])
+    #     if t['state'] in states
+    # ])
 
     # Convert the task list to a dictionary with the task name as the key
     return {task['description']: task for task in task_list}
@@ -468,11 +462,6 @@ def get_ee_tasks(states=['RUNNING', 'READY'], verbose=False, retries=6):
 def millis(input_dt):
     """Convert datetime to milliseconds since epoch"""
     return int(input_dt.replace(tzinfo=timezone.utc).timestamp()) * 1000
-    # Python 3 (or 2 with future module)
-    # return 1000 * int(calendar.timegm(input_dt.timetuple()))
-    # Python 2
-    # return 1000 * long(calendar.timegm(input_dt.timetuple()))
-    # return 1000 * long(time.mktime(input_dt.timetuple()))
 
 
 def arg_valid_date(input_date):
