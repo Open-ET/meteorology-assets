@@ -119,7 +119,7 @@ def cimis_daily_asset_ingest(tgt_dt, variables, workspace='/tmp', overwrite_flag
         'Tdew': ['Tdew'],
         'Tn': ['Tn'],
         'Tx': ['Tx'],
-        'U2': ['U2']
+        'U2': ['U2'],
     }
     # Define mapping of CIMIS variables to output file names
     # For now, these need to be identical to the user variable names
@@ -132,9 +132,21 @@ def cimis_daily_asset_ingest(tgt_dt, variables, workspace='/tmp', overwrite_flag
         'Tdew': 'Tdew',
         'Tn': 'Tn',
         'Tx': 'Tx',
-        'U2': 'U2'
+        'U2': 'U2',
     }
     gz_fmt = '{variable}.asc.gz'
+
+    var_units = {
+        'ETo': 'mm',
+        # 'K': None,
+        # 'Rnl': 'Rnl',
+        # 'Rs': 'Rs',
+        # 'Rso': 'Rso',
+        # 'Tdew': 'Tdew',
+        # 'Tn': 'Tn',
+        # 'Tx': 'Tx',
+        # 'U2': 'U2',
+    }
 
     # RasterIO can't read from the bucket directly when deployed as a function
     land_mask_url = 'https://storage.googleapis.com/openet/cimis/cimis_mask.tif'
@@ -348,20 +360,17 @@ def cimis_daily_asset_ingest(tgt_dt, variables, workspace='/tmp', overwrite_flag
         'date_ingested': f'{TODAY_DT.strftime("%Y-%m-%d")}',
         'source': SOURCE_URL.replace('https://', '').replace('http://', ''),
     }
+    for v in variables:
+        if (v in var_units.keys()) and var_units[v]:
+            properties[f'units_{v}'] = var_units[v]
 
-    # NOTE: The band names are being forced to lower case here
     params = {
         'name': asset_id,
         'bands': [
             {'id': v, 'tilesetId': 'image', 'tilesetBandIndex': i}
             for i, v in enumerate(variables)
         ],
-        'tilesets': [
-            {
-                'id': 'image',
-                'sources': [{'uris': [bucket_path]}]
-            }
-        ],
+        'tilesets': [{'id': 'image', 'sources': [{'uris': [bucket_path]}]}],
         'properties': properties,
         'startTime': tgt_dt.isoformat() + '.000000000Z',
         # 'pyramiding_policy': 'MEAN',

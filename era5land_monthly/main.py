@@ -187,6 +187,11 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
         # 'surface_net_solar_radiation': 'surface_net_solar_radiation',
         # 'surface_net_thermal_radiation': 'surface_net_thermal_radiation',
     }
+    var_units = {
+        'total_precipitation': 'mm',
+        'eto_asce': 'mm',
+        'etr_asce': 'mm',
+    }
 
     try:
         asset_info = ee.data.getInfo(asset_id)
@@ -213,15 +218,17 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
             return f'{export_name} - Asset already exists and overwrite is False, skipping\n'
 
     properties = {
-        'date_ingested': TODAY_DT.strftime('%Y-%m-%d'),
+        'build_date': TODAY_DT.strftime('%Y-%m-%d'),
         'month': int(tgt_dt.month),
         'year': int(tgt_dt.year),
-        # 'scale_factor': 1.0,
+        'system:index': tgt_dt.strftime(ASSET_DT_FMT),
         'system:time_start': millis(tgt_dt),
         # 'system:time_start': ee.Date(tgt_dt.strftime('%Y-%m-%d')).millis().getInfo(),
         # 'system:time_start': ee.Date(tgt_dt.strftime('%Y-%m-%d')).millis(),
-        'system:index': tgt_dt.strftime(ASSET_DT_FMT),
     }
+    for v in VARIABLES:
+        if (v in var_units.keys()) and var_units[v]:
+            properties[f'units_{v}'] = var_units[v]
 
     var_img_list = []
     for var in VARIABLES:

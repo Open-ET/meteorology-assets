@@ -462,21 +462,21 @@ def conus404_daily_asset_ingest(
     # CGM - Uploading the properties json should happen before uploading the image
     #   to warmup the cloud function
     properties = {
-        'system:index': tgt_dt.strftime(ASSET_DT_FMT),
-        'system:time_start': millis(start_dt),
+        'build_date': datetime.today().strftime('%Y-%m-%d'),
         'date': tgt_dt.strftime('%Y-%m-%d'),
-        'date_ingested': datetime.today().strftime("%Y-%m-%d"),
         'doy': int(tgt_dt.strftime('%j')),
         # 'hour': int(tgt_dt.strftime('%H')),
-        # TODO: Chnage this to something more descriptive, maybe the "cat"?
+        # TODO: Change this to something more descriptive, maybe the "cat"?
         'source': SOURCE_NAME,
         'tool_name': TOOL_NAME,
         'tool_version': TOOL_VERSION,
         'uris': bucket_path,
+        'system:index': tgt_dt.strftime(ASSET_DT_FMT),
+        'system:time_start': millis(start_dt),
     }
     if 'ETO_ASCE' in variables or 'ETR_ASCE' in variables:
-        properties['refet_version'] = importlib_metadata.version("refet")
-        # properties['refet_version'] = importlib.metadata.version("refet")
+        properties['refet_version'] = importlib_metadata.version('refet')
+        # properties['refet_version'] = importlib.metadata.version('refet')
 
 
     if overwrite_flag or not json_blob.exists():

@@ -99,6 +99,11 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
         'etr': 'etr',
         'pr': 'pr',
     }
+    var_units = {
+        'eto': 'mm',
+        'etr': 'mm',
+        'pr': 'mm',
+    }
 
     if ee.data.getInfo(asset_id):
         if overwrite_flag:
@@ -136,22 +141,24 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
         status_summary = 'permanent'
 
     properties = {
-        'date_ingested': TODAY_DT.strftime('%Y-%m-%d'),
+        'build_date': TODAY_DT.strftime('%Y-%m-%d'),
         'month': int(start_dt.month),
         'year': int(start_dt.year),
         'early': status['early'],
         'provisional': status['provisional'],
         'permanent': status['permanent'],
-        # TODO: Switch to server side calls (see TODO's abovee)
+        # TODO: Switch to server side calls (see TODO's above)
         # 'early': status.get('early'),
         # 'provisional': status.get('provisional'),
         # 'permanent': status.get('permanent'),
-        # 'scale_factor': 1.0,
         'status': status_summary,
         # 'system:time_start': millis(start_dt),
         'system:time_start': ee.Date(start_dt.strftime('%Y-%m-%d')).millis(),
         'system:index': start_dt.strftime(ASSET_DT_FMT),
     }
+    for v in variables:
+        if (v in var_units.keys()) and var_units[v]:
+            properties[f'units_{v}'] = var_units[v]
 
     var_img_list = []
     for var in variables:

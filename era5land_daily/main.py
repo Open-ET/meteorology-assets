@@ -80,6 +80,18 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
 
     """
 
+    var_units = {
+        'temperature_2m_max': 'K',
+        'temperature_2m_min': 'K',
+        'temperature_2m_mean': 'K',
+        'dewpoint_temperature_2m': 'K',
+        'wind_10m': 'm s-1',
+        'surface_solar_radiation_downwards': 'J m-2',
+        'total_precipitation': 'm',
+        'eto_asce': 'mm',
+        'etr_asce': 'mm',
+    }
+
     if not region or region.lower() == 'global':
         logging.info(f'Export ERA5-Land {TIMESTEP} image - {tgt_dt.strftime("%Y-%m-%d")}')
         export_name = f'openet_meteo_era5land_{TIMESTEP}_{tgt_dt.strftime("%Y%m%d")}'
@@ -214,13 +226,18 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
     )
 
     properties = {
+        'build_date': datetime.today().strftime('%Y-%m-%d'),
+        'date': tgt_dt.strftime('%Y-%m-%d'),
+        'geerefet_version': metadata.version('openet-refet-gee'),
         'system:index': tgt_dt.strftime('%Y%m%d'),
         'system:time_start': millis(start_dt),
         # 'system:time_start': start_date.millis(),
-        'date': tgt_dt.strftime('%Y-%m-%d'),
-        'date_ingested': datetime.today().strftime('%Y-%m-%d'),
-        'geerefet_version': metadata.version('openet-refet-gee')
     }
+
+    for band_name, units in var_units.items():
+        if units:
+            properties[f'units_{band_name}'] = units
+
     # CGM - Variable list is hardcoded for now so always write version above
     # if 'eto_asce' in variables or 'etr_asce' in variables:
     #     properties['geerefet_version'] = metadata.version('openet-refet-gee')
