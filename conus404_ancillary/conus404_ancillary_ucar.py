@@ -30,11 +30,13 @@ NC_URL = "https://thredds.rda.ucar.edu/thredds/dodsC/files/g/ds559.0/INVARIANT/w
 # NC_URL = "https://rda.ucar.edu/thredds/dodsC/files/g/ds559.0/INVARIANT/wrfconstants_usgs404.nc"
 
 
-def main(overwrite_flag=False):
+def main(project_id, overwrite_flag=False):
     """Build and ingest CONUS404 ancillary assets into Earth Engine
 
     Parameters
     ----------
+    project_id : str
+        Earth Engine project ID.
     overwrite_flag : bool, optional
         If True, overwrite existing files (the default is False).
 
@@ -100,7 +102,7 @@ def main(overwrite_flag=False):
         os.makedirs(ancillary_ws)
 
     logging.info('\nInitializing Earth Engine')
-    ee.Initialize()
+    ee.Initialize(project=project_id)
 
     for var_name in variables:
         logging.info(f'\n{var_name}')
@@ -378,6 +380,8 @@ def arg_parse():
     parser = argparse.ArgumentParser(
         description='Ingest CONUS404 ancillary assets into Earth Engine',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
     # parser.add_argument(
     #     '--zero', default=False, action='store_true',
     #     help='Set elevation nodata values to 0')
@@ -397,4 +401,4 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    main(overwrite_flag=args.overwrite)
+    main(project_id=args.project, overwrite_flag=args.overwrite)

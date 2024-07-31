@@ -28,11 +28,13 @@ STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 ASSET_FOLDER = 'projects/openet/assets/meteorology/cimis/ancillary'
 
 
-def main(ancillary_ws, overwrite_flag=False):
+def main(project_id, ancillary_ws, overwrite_flag=False):
     """Process CIMIS ancillary data
 
     Parameters
     ----------
+    project_id : str
+        Earth Engine project ID.
     ancillary_ws : str
         Folder of ancillary rasters.
     overwrite_flag : bool, optional
@@ -275,11 +277,11 @@ def main(ancillary_ws, overwrite_flag=False):
         if os.path.isdir(temp_ws):
             shutil.rmtree(temp_ws)
 
+    logging.info('\nIngesting into Earth Engine')
+    ee.Initialize(project=project_id)
 
     # Ingest into Earth Engine
     # DEADBEEF - For now, assume the file is in the bucket
-    logging.info('\nIngesting into Earth Engine')
-    ee.Initialize()
     asset_params = [
         # [f'{asset_folder}/elevation',
         #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(elev_raster)}', 'elev', 'mn30_grd'],
@@ -465,6 +467,8 @@ def arg_parse():
         description='Download/prep CIMIS ancillary data',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
+    parser.add_argument(
         '--ancillary', default=os.path.join(os.getcwd(), 'ancillary'),
         metavar='PATH', help='Ancillary raster folder path')
     parser.add_argument(
@@ -486,4 +490,8 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    main(ancillary_ws=args.ancillary, overwrite_flag=args.overwrite)
+    main(
+        project_id=args.project,
+        ancillary_ws=args.ancillary,
+        overwrite_flag=args.overwrite,
+    )

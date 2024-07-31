@@ -22,11 +22,13 @@ BUCKET_FOLDER = 'meteorology/era5land/ancillary'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 
 
-def main(overwrite_flag=False):
+def main(project_id, overwrite_flag=False):
     """Ingest ERA5-Land ancillary assets into Earth Engine
 
     Parameters
     ----------
+    project_id : str
+        Earth Engine project ID.
     overwrite_flag : bool, optional
         If True, overwrite existing files (the default is False).
 
@@ -81,7 +83,7 @@ def main(overwrite_flag=False):
     logging.debug(f'  Extent:     {output_extent}')
 
     logging.info('\nInitializing Earth Engine')
-    ee.Initialize()
+    ee.Initialize(project=project_id)
 
     if overwrite_flag and ee.data.getInfo(lsm_asset_id):
         logging.info('\nLand surface mask asset already exists, removing')
@@ -97,7 +99,8 @@ def main(overwrite_flag=False):
         ee.data.deleteAsset(lon_asset_id)
 
 
-    if not ee.data.getInfo(lsm_asset_id):
+    # if not ee.data.getInfo(lsm_asset_id):
+    if True:
         logging.info('\nLand Surface Mask (LSM)')
 
         if overwrite_flag or not os.path.isfile(lsm_nc):
@@ -137,28 +140,28 @@ def main(overwrite_flag=False):
         blob = bucket.blob(f'{BUCKET_FOLDER}/{os.path.basename(lsm_bucket_path)}')
         blob.upload_from_filename(lsm_tif)
 
-        # For now, assume the file is in the bucket
-        logging.info('Ingesting into Earth Engine')
-        logging.debug(f'  {lsm_asset_id}')
-        task_id = ee.data.newTaskId()[0]
-        logging.debug(f'  {task_id}')
-        params = {
-            'name': lsm_asset_id,
-            'bands': [{'id': lsm_band_name, 'tilesetId': 'image', 'tilesetBandIndex': 0}],
-            'tilesets': [{'id': 'image', 'sources': [{'uris': [lsm_bucket_path]}]}],
-            'properties': {
-                'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
-            },
-            # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
-            # 'pyramidingPolicy': 'MEAN',
-            # 'missingData': {'values': [nodata_value]},
-        }
-        ee.data.startIngestion(task_id, params, allow_overwrite=True)
-        input('Press ENTER after lsm asset is ingested')
+        # # For now, assume the file is in the bucket
+        # logging.info('Ingesting into Earth Engine')
+        # logging.debug(f'  {lsm_asset_id}')
+        # task_id = ee.data.newTaskId()[0]
+        # logging.debug(f'  {task_id}')
+        # params = {
+        #     'name': lsm_asset_id,
+        #     'bands': [{'id': lsm_band_name, 'tilesetId': 'image', 'tilesetBandIndex': 0}],
+        #     'tilesets': [{'id': 'image', 'sources': [{'uris': [lsm_bucket_path]}]}],
+        #     'properties': {
+        #         'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
+        #     },
+        #     # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
+        #     # 'pyramidingPolicy': 'MEAN',
+        #     # 'missingData': {'values': [nodata_value]},
+        # }
+        # ee.data.startIngestion(task_id, params, allow_overwrite=True)
+        # input('Press ENTER after lsm asset is ingested')
 
-        logging.info('Removing from bucket')
-        if blob and blob.exists():
-            blob.delete()
+        # logging.info('Removing from bucket')
+        # if blob and blob.exists():
+        #     blob.delete()
 
         # logging.debug('Removing local file')
         # if os.path.isfile(lsm_tif):
@@ -171,7 +174,8 @@ def main(overwrite_flag=False):
         # ee.data.setIamPolicy(lst_asset_id, policy)
 
 
-    if not ee.data.getInfo(elev_asset_id):
+    # if not ee.data.getInfo(elev_asset_id):
+    if True:
         logging.info('\nElevation')
 
         if overwrite_flag or not os.path.isfile(elev_nc):
@@ -223,28 +227,28 @@ def main(overwrite_flag=False):
         blob = bucket.blob(f'{BUCKET_FOLDER}/{os.path.basename(elev_bucket_path)}')
         blob.upload_from_filename(elev_tif)
 
-        # For now, assume the file is in the bucket
-        logging.info('Ingesting into Earth Engine')
-        logging.debug(f'  {elev_asset_id}')
-        task_id = ee.data.newTaskId()[0]
-        logging.debug(f'  {task_id}')
-        params = {
-            'name': elev_asset_id,
-            'bands': [{'id': elev_band_name, 'tilesetId': 'image', 'tilesetBandIndex': 0}],
-            'tilesets': [{'id': 'image', 'sources': [{'uris': [elev_bucket_path]}]}],
-            'properties': {
-                'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
-            },
-            # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
-            # 'pyramidingPolicy': 'MEAN',
-            # 'missingData': {'values': [nodata_value]},
-        }
-        ee.data.startIngestion(task_id, params, allow_overwrite=True)
-        input('Press ENTER after elevation asset is ingested')
+        # # For now, assume the file is in the bucket
+        # logging.info('Ingesting into Earth Engine')
+        # logging.debug(f'  {elev_asset_id}')
+        # task_id = ee.data.newTaskId()[0]
+        # logging.debug(f'  {task_id}')
+        # params = {
+        #     'name': elev_asset_id,
+        #     'bands': [{'id': elev_band_name, 'tilesetId': 'image', 'tilesetBandIndex': 0}],
+        #     'tilesets': [{'id': 'image', 'sources': [{'uris': [elev_bucket_path]}]}],
+        #     'properties': {
+        #         'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
+        #     },
+        #     # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
+        #     # 'pyramidingPolicy': 'MEAN',
+        #     # 'missingData': {'values': [nodata_value]},
+        # }
+        # ee.data.startIngestion(task_id, params, allow_overwrite=True)
+        # input('Press ENTER after elevation asset is ingested')
 
-        logging.info('Removing from bucket')
-        if blob and blob.exists():
-            blob.delete()
+        # logging.info('Removing from bucket')
+        # if blob and blob.exists():
+        #     blob.delete()
 
         # logging.debug('Removing local file')
         # if os.path.isfile(elev_tif):
@@ -353,8 +357,10 @@ def arg_parse():
         description='Ingest ERA5-Land ancillary assets into Earth Engine',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
-        '--zero', default=False, action='store_true',
-        help='Set elevation nodata values to 0')
+        '--project', type=str, required=True, help='Earth Engine Project ID')
+    # parser.add_argument(
+    #     '--zero', default=False, action='store_true',
+    #     help='Set elevation nodata values to 0')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
@@ -371,4 +377,4 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    main(overwrite_flag=args.overwrite)
+    main(project_id=args.project, overwrite_flag=args.overwrite)
