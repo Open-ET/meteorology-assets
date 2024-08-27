@@ -13,8 +13,10 @@ __pycache__/
 .DS_Store
 
 config.py
+
+*.asc
+*.asc.gz
 *.nc
 *.tif
+*.tif.aux.xml
 *.zip
-
-cimis_tools/ancillary/temp

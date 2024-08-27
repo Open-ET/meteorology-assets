@@ -298,12 +298,12 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
     # Ingest into Earth Engine
     # DEADBEEF - For now, assume the file is in the bucket
     asset_params = [
-        # [f'{asset_folder}/elevation',
-        #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(elev_raster)}', 'elev', 'mn30_grd'],
-        # [f'{ASSET_FOLDER}/latitude',
-        #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lat_raster)}', 'latitude', ''],
-        # [f'{ASSET_FOLDER}/longitude',
-        #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lon_raster)}', 'longitude', ''],
+        [f'{ASSET_FOLDER}/elevation',
+         f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(elev_raster)}', 'elev', 'mn30_grd'],
+        [f'{ASSET_FOLDER}/latitude',
+         f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lat_raster)}', 'latitude', ''],
+        [f'{ASSET_FOLDER}/longitude',
+         f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lon_raster)}', 'longitude', ''],
         [f'{ASSET_FOLDER}/mask',
          f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(mask_raster)}', 'mask', ''],
     ]
