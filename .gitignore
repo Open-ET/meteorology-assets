@@ -15,3 +15,6 @@ __pycache__/
 config.py
 *.nc
 *.tif
+*.zip
+
+cimis_tools/ancillary/temp

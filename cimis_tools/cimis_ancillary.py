@@ -11,6 +11,7 @@ import zipfile
 import ee
 from google.cloud import storage
 import numpy as np
+from pyproj import Transformer
 import rasterio
 import rasterio.crs
 import rasterio.warp
@@ -78,12 +79,15 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
     # asset_geo = (asset_extent[0], asset_cs, 0., asset_extent[3], 0., -asset_cs)
 
     # Spatial reference parameters
-    asset_proj = rasterio.crs.CRS.from_proj4(
+    asset_proj4 = (
         '+proj=aea +lat_1=34 +lat_2=40.5 +lat_0=0 +lon_0=-120 +x_0=0 '
         '+y_0=-4000000 +ellps=GRS80 +datum=NAD83 +units=m +no_defs'
     )
-    # asset_proj = 'EPSG:3310'  # NAD_1983_California_Teale_Albers
-    logging.debug(f'CRS: {asset_proj}')
+    asset_crs = rasterio.crs.CRS.from_proj4(asset_proj4)
+    asset_epsg = 'EPSG:3310'  # NAD_1983_California_Teale_Albers
+    logging.debug(f'CRS: {asset_crs}')
+
+    transformer = Transformer.from_crs('EPSG:4326', asset_proj4, always_xy=True)
 
     # Build output workspace if it doesn't exist
     if not os.path.isdir(ancillary_ws):
@@ -118,13 +122,24 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
         logging.debug('  Computing mask')
         logging.debug(f'    {mask_raster}')
         mask_array = ascii_to_array(mask_ascii)
+
         # Newer CIMIS images aren't using the nodata value
         mask_array = (mask_array > 0)
         mask_array = mask_array.astype(np.uint8)
+
+        # Manually set a couple of the island point mask values to 0
+        for lon, lat in [(-119.404, 34.009), (-119.042, 33.483),
+                         (-118.602, 33.0283), (-118.580, 33.027), (-118.58, 33.01)]:
+            xs, ys = transformer.transform(lon, lat)
+            x = math.floor((xs - asset_geo[2]) / asset_geo[0])
+            y = math.floor((asset_geo[5] - ys) / asset_geo[0])
+            #print(mask_array[y-1:y+2, x-1:x+2])
+            mask_array[y, x] = 0
+
         # mask_array = np.isfinite(mask_array).astype(np.uint8)
         array_to_geotiff(
             mask_array, mask_raster,
-            output_geo=asset_geo, output_proj=asset_proj,
+            output_geo=asset_geo, output_crs=asset_crs,
             output_nodata=0, output_type=rasterio.uint8,
         )
         os.remove(mask_ascii)
@@ -145,7 +160,7 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
         # Compute the GCS lat/lon grid
         gcs_cs = 0.005
         gcs_transform, gcs_cols, gcs_rows = rasterio.warp.calculate_default_transform(
-            src_crs=asset_proj, dst_crs='EPSG:4326',
+            src_crs=asset_crs, dst_crs='EPSG:4326',
             width=asset_shape[1], height=asset_shape[0], resolution=gcs_cs,
             left=asset_extent[0], bottom=asset_extent[1],
             right=asset_extent[2], top=asset_extent[3],
@@ -171,12 +186,12 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
         logging.debug(f'  {lat_raster}')
         array_to_geotiff(
             lat_full_array.astype(np.float32), lat_full_raster,
-            output_geo=gcs_transform, output_proj='EPSG:4326',
+            output_geo=gcs_transform, output_crs='EPSG:4326',
             output_nodata=-9999, output_type=rasterio.float32,
         )
         reproject(
             src_path=lat_full_raster, dst_path=lat_raster,
-            dst_crs=asset_proj, dst_geo=asset_geo,
+            dst_crs=asset_crs, dst_geo=asset_geo,
             dst_rows=asset_shape[0], dst_cols=asset_shape[1],
             dst_nodata=-9999, dst_type=rasterio.float32,
             dst_resample=rasterio.warp.Resampling.bilinear,
@@ -185,12 +200,12 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
         logging.debug(f'  {lon_raster}')
         array_to_geotiff(
             lon_full_array.astype(np.float32), lon_full_raster,
-            output_geo=gcs_transform, output_proj='EPSG:4326',
+            output_geo=gcs_transform, output_crs='EPSG:4326',
             output_nodata=-9999, output_type=rasterio.float32,
         )
         reproject(
             src_path=lon_full_raster, dst_path=lon_raster,
-            dst_crs=asset_proj, dst_geo=asset_geo,
+            dst_crs=asset_crs, dst_geo=asset_geo,
             dst_rows=asset_shape[0], dst_cols=asset_shape[1],
             dst_nodata=-9999, dst_type=rasterio.float32,
             dst_resample=rasterio.warp.Resampling.bilinear,
@@ -245,7 +260,7 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
             logging.debug('  Projecting to CIMIS grid')
             reproject(
                 src_path=elev_full_raster, dst_path=elev_raster,
-                dst_crs=asset_proj, dst_geo=asset_geo,
+                dst_crs=asset_crs, dst_geo=asset_geo,
                 dst_rows=asset_shape[0], dst_cols=asset_shape[1],
                 dst_nodata=-9999, dst_type=rasterio.float32,
                 dst_resample=rasterio.warp.Resampling.average,
@@ -285,8 +300,10 @@ def main(project_id, ancillary_ws, overwrite_flag=False):
     asset_params = [
         # [f'{asset_folder}/elevation',
         #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(elev_raster)}', 'elev', 'mn30_grd'],
-        [f'{ASSET_FOLDER}/latitude',
-         f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lat_raster)}', 'latitude', ''],
+        # [f'{ASSET_FOLDER}/latitude',
+        #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lat_raster)}', 'latitude', ''],
+        # [f'{ASSET_FOLDER}/longitude',
+        #  f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(lon_raster)}', 'longitude', ''],
         [f'{ASSET_FOLDER}/mask',
          f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{os.path.basename(mask_raster)}', 'mask', ''],
     ]
@@ -373,7 +390,7 @@ def ascii_to_array(input_ascii, input_type=np.float32):
     # return output_array, input_geo
 
 
-def array_to_geotiff(output_array, output_path, output_geo, output_proj,
+def array_to_geotiff(output_array, output_path, output_geo, output_crs,
                      output_nodata, output_type=rasterio.float32):
     """Save NumPy array as a geotiff
 
@@ -386,7 +403,7 @@ def array_to_geotiff(output_array, output_path, output_geo, output_proj,
         Image shape (rows, cols).
     output_geo : tuple or list of floats
         Geo-transform (xmin, cs, 0, ymax, 0, -cs).
-    output_proj : str
+    output_crs : str
         Projection Well Known Text (WKT) string.
     output_nodata : float
         GeoTIFF nodata value.
@@ -406,7 +423,7 @@ def array_to_geotiff(output_array, output_path, output_geo, output_proj,
     output_ds = rasterio.open(
         output_path, 'w', driver='GTiff', nodata=output_nodata,
         width=output_array.shape[1], height=output_array.shape[0], count=1,
-        dtype=output_type, crs=output_proj, transform=output_geo,
+        dtype=output_type, crs=output_crs, transform=output_geo,
         compress='deflate', tiled=True,
         # compress='deflate', tiled=True, predictor=2,
         # compress='lzw', tiled=True, predictor=1,
