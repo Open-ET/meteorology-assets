@@ -14,10 +14,7 @@ ASSET_DT_FMT = '%Y%m'
 START_MONTH_OFFSET = 3
 END_MONTH_OFFSET = 0
 VARIABLES = ['eto', 'etr', 'pr']
-# VARIABLES = ['bi', 'erc', 'eto', 'etr', 'fm100', 'fm1000', 'pr', 'rmax',
-#              'rmin', 'sph', 'srad', 'th', 'tmmn', 'tmmx', 'vs', 'vpd']
-TODAY_DT = datetime.today()
-# TODAY_DT = datetime.now(timezone=timezone.utc)
+TODAY_DT = datetime.now(timezone.utc)
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+
@@ -85,14 +82,6 @@ def gridmet_monthly_asset_export(start_dt, variables, overwrite_flag=False):
         'eto': ['sum'],
         'etr': ['sum'],
         'pr': ['sum'],
-        # 'rmax': [],
-        # 'rmin': [],
-        # 'sph': [],
-        # 'srad': [],
-        # 'tmmn': [],
-        # 'tmmx': [],
-        # 'vs': [],
-        # 'vpd': [],
     }
     var_names = {
         'eto': 'eto',

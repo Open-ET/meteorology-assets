@@ -35,8 +35,7 @@ TASK_LOCATION = 'us-central1'
 TASK_QUEUE = 'ee-single-worker'
 START_DAY_OFFSET = 365
 END_DAY_OFFSET = 0
-TODAY_DT = datetime.today()
-# TODAY_DT = datetime.now(timezone=timezone.utc)
+TODAY_DT = datetime.now(timezone.utc)
 VARIABLES = ['Tn', 'Tx', 'Tdew', 'Rs', 'Rso', 'Rnl', 'U2', 'ETo']
 # VARIABLES = ['Tn', 'Tx', 'Tdew', 'Rs', 'Rso', 'Rnl', 'K', 'U2', 'ETo']
 
@@ -449,12 +448,11 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
     # Check if the assets already exist
     # For now, assume the collection exists
     logging.debug('\nChecking existing assets')
-    asset_id_list = get_ee_assets(
-        ASSET_COLL_ID, start_dt, end_dt + timedelta(days=1)
-    )
+    asset_id_list = get_ee_assets(ASSET_COLL_ID, start_dt, end_dt + timedelta(days=1))
     asset_dates = {
         datetime.strptime(m.group('date'), ASSET_DT_FMT).strftime('%Y-%m-%d')
-        for asset_id in asset_id_list for m in [asset_id_re.search(asset_id)] if m
+        for asset_id in asset_id_list
+        for m in [asset_id_re.search(asset_id)] if m
     }
     logging.debug(f'\nAsset dates: {", ".join(sorted(asset_dates))}')
 
@@ -707,6 +705,7 @@ def cron_worker(request):
         abort(400, description=f'overwrite="{overwrite_flag}" could not be parsed')
 
     response = cimis_daily_asset_ingest(**args)
+
     return Response(response, mimetype='text/plain')
 
 
@@ -736,29 +735,15 @@ def queue_ingest_tasks(tgt_dt_list):
         # Trying out adding the timestamp to avoid this for testing/debug
         name = f'{parent}/tasks/cimis_daily_v1_asset_{tgt_dt.strftime("%Y%m%d")}_' \
                f'{TODAY_DT.strftime("%Y%m%d%H%M%S")}'
-        # name = f'{parent}/tasks/cimis_daily_asset_{tgt_dt.strftime("%Y%m%d")}'
         response += name + '\n'
         logging.info(name)
 
         # Using the json body wasn't working, switching back to URL
         # Couldn't get authentication with oidc_token to work
-        # payload = {'date': tgt_dt.strftime('%Y-%m-%d')}
         task = {
             'http_request': {
                 'http_method': tasks_v2.HttpMethod.POST,
-                'url': '{}/{}?date={}'.format(
-                    FUNCTION_URL, FUNCTION_NAME, tgt_dt.strftime('%Y-%m-%d')
-                ),
-                # 'url': '{}/{}?date={}&overwrite={}'.format(
-                #     FUNCTION_URL, FUNCTION_NAME, tgt_dt.strftime('%Y-%m-%d'),
-                #     str(overwrite_flag).lower()),
-                # 'url': '{}/{}'.format(FUNCTION_URL, FUNCTION_NAME),
-                # 'headers': {'Content-type': 'application/json'},
-                # 'body': json.dumps(payload).encode(),
-                # 'oidc_token': {
-                #     'service_account_email': SERVICE_ACCOUNT,
-                #     'audience': '{}/{}'.format(FUNCTION_URL, FUNCTION_NAME)},
-                # 'relative_uri': ,
+                'url': f'{FUNCTION_URL}/{FUNCTION_NAME}?date={tgt_dt.strftime("%Y-%m-%d")}',
             },
             'name': name,
         }
@@ -808,15 +793,9 @@ def ascii_to_array(input_ascii, input_type=np.float32):
     input_cs = float(input_header[4].strip().split()[-1])
     input_nodata = float(input_header[5].strip().split()[-1])
     # Using RasterIO transform format
-    input_geo = (
-        input_cs, 0., input_xmin,
-        0., -input_cs, input_ymin + input_cs * input_rows)
-    # input_geo = (
-    #     input_xmin, input_cs, 0.,
-    #     input_ymin + input_cs * input_rows, 0., -input_cs)
+    input_geo = (input_cs, 0., input_xmin, 0., -input_cs, input_ymin + input_cs * input_rows)
 
-    output_array = np.genfromtxt(
-        input_ascii, dtype=input_type, skip_header=6)
+    output_array = np.genfromtxt(input_ascii, dtype=input_type, skip_header=6)
     output_array[output_array == input_nodata] = -9999
     # output_array[output_array == input_nodata] = np.nan
 
@@ -990,48 +969,6 @@ def url_download(download_url, output_path, verify=True):
             return False
 
 
-# def url_download(input_url, output_path):
-#     download_response = requests.get(input_url)
-#     if download_response.status_code != 200:
-#         logging.debug(f'  HTTP Status: {download_response.status_code}')
-#         return False
-#     with open(output_path, 'wb') as output_f:
-#         output_f.write(download_response.content)
-#     time.sleep(0.1)
-#     return True
-
-
-# def get_info(ee_obj, max_retries=4):
-#     """Make an exponential back off getInfo call on an Earth Engine object"""
-#     # output = ee_obj.getInfo()
-#     output = None
-#     for i in range(1, max_retries):
-#         try:
-#             output = ee_obj.getInfo()
-#         except ee.ee_exception.EEException as e:
-#             if ('Earth Engine memory capacity exceeded' in str(e) or
-#                     'Earth Engine capacity exceeded' in str(e) or
-#                     'Too many concurrent aggregations' in str(e) or
-#                     'Computation timed out.' in str(e)):
-#                 # TODO: Maybe add 'Connection reset by peer'
-#                 logging.info(f'    Resending query ({i}/{max_retries})')
-#                 logging.info(f'    {e}')
-#             else:
-#                 # TODO: What should happen for unhandled EE exceptions?
-#                 logging.info('    Unhandled Earth Engine exception')
-#                 logging.info(f'    {e}')
-#         except Exception as e:
-#             logging.info(f'    Resending query ({i}/{max_retries})')
-#             logging.debug(f'    {e}')
-#
-#         if output:
-#             break
-#         else:
-#             time.sleep(i ** 3)
-#
-#     return output
-
-
 def arg_valid_date(input_date):
     """Check that a date string is ISO format (YYYY-MM-DD)
 
@@ -1130,26 +1067,26 @@ if __name__ == '__main__':
 
     # # Build the image collection if it doesn't exist
     # logging.debug(f'Image Collection: {ASSET_COLL_ID}')
+    # if not ee.data.getInfo(ASSET_COLL_ID.rsplit('/', 1)[0]):
+    #     logging.info(f'\nImage collection folder does not exist and will be built'
+    #                  f'\n  {ASSET_COLL_ID.rsplit("/", 1)[0]}')
+    #     input('Press ENTER to continue')
+    #     ee.data.createAsset({'type': 'FOLDER'}, ASSET_COLL_ID.rsplit('/', 1)[0])
     # if not ee.data.getInfo(ASSET_COLL_ID):
     #     logging.info('\nImage collection does not exist and will be built'
     #                  '\n  {}'.format(ASSET_COLL_ID))
     #     input('Press ENTER to continue')
     #     ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
 
-
-    ingest_dt_list = cimis_daily_asset_dates(
-        args.start, args.end, overwrite_flag=args.overwrite
-    )
-    logging.info(ingest_dt_list)
-    input('ENTER')
-
+    ingest_dt_list = cimis_daily_asset_dates(args.start, args.end, overwrite_flag=args.overwrite)
     for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
         response = cimis_daily_asset_ingest(
-            ingest_dt, variables=args.variables, workspace=args.workspace,
+            tgt_dt=ingest_dt,
+            variables=args.variables,
+            workspace=args.workspace,
             overwrite_flag=args.overwrite
         )
         logging.info(f'  {response}')
-
 
     # from unittest.mock import Mock
     # data = {

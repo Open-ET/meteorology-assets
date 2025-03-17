@@ -31,8 +31,7 @@ VARIABLES = [
     # 'surface_pressure', 'wind_10m', 'surface_solar_radiation_downwards',
     # # 'surface_net_solar_radiation', 'surface_net_thermal_radiation',
 ]
-TODAY_DT = datetime.today()
-# TODAY_DT = datetime.now(timezone=timezone.utc)
+TODAY_DT = datetime.now(timezone.utc)
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+

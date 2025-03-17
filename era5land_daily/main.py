@@ -32,8 +32,7 @@ TIMESTEP = 'daily'
 #     # 'surface_net_solar_radiation', 'surface_net_thermal_radiation',
 #     'total_precipitation', 'eto_asce', 'etr_asce',
 # ]
-# TODAY_DT = datetime.today()
-# TODAY_DT = datetime.now(timezone=timezone.utc)
+TODAY_DT = datetime.now(timezone.utc)
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+

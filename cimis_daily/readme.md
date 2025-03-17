@@ -4,7 +4,7 @@ Spatial CIMIS is currently being ingested as Earth Engine assets using cloud fun
 
 ## Assets
 
-Collection ID: projects/openet/meteorology/cimis/daily
+Collection ID: projects/openet/assets/meteorology/cimis/daily
 
 Bands: Tn, Tx, Tdew, Rs, Rso, Rnl, U2, ETo
 
