@@ -81,5 +81,5 @@ gcloud functions call urma-meteorology-daily --project openet --data '{"region":
 
 The "update" parameter will need to be changed "create" the first time the job is scheduled.
 ```
-gcloud scheduler jobs update http urma-meteorology-daily --schedule "7 4 * * *" --uri "https://us-central1-openet.cloudfunctions.net/urma-meteorology-daily" --description "URMA Daily Meteorology" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
+gcloud scheduler jobs update http urma-meteorology-daily --schedule "7 4 * * *" --uri "https://us-central1-openet.cloudfunctions.net/urma-meteorology-daily" --description "URMA Daily Meteorology" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
 ```

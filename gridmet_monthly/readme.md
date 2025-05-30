@@ -53,7 +53,7 @@ gcloud functions call gridmet-meteorology-monthly --project openet
 ### Scheduling the job
 
 ```
-gcloud scheduler jobs update http gridmet-meteorology-monthly-v1 --schedule "12 6 5 * *" --uri "https://us-central1-openet.cloudfunctions.net/gridmet-meteorology-monthly-v1" --description "Update Monthly GRIDMET Meteorology (PPT)" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
+gcloud scheduler jobs update http gridmet-meteorology-monthly-v1 --schedule "12 6 5 * *" --uri "https://us-central1-openet.cloudfunctions.net/gridmet-meteorology-monthly-v1" --description "Update Monthly GRIDMET Meteorology (PPT)" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
 ```
 
 --oidc-service-account-email openet-assets-queue@openet.iam.gserviceaccount.com --oidc-token-audience "https://us-central1-openet.cloudfunctions.net/gridmet-meteorology-monthly" 

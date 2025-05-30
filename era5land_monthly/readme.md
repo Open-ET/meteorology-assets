@@ -66,5 +66,5 @@ gcloud functions call era5land-meteorology-monthly --project openet --data '{"re
 
 The "update" parameter will need to be changed "create" the first time the job is scheduled.
 ```
-gcloud scheduler jobs update http era5land-meteorology-monthly --schedule "20 4 5 * *" --uri "https://us-central1-openet.cloudfunctions.net/era5land-meteorology-monthly?region=na" --description "ERA5-Land Monthly Meteorology" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
+gcloud scheduler jobs update http era5land-meteorology-monthly --schedule "20 4 5 * *" --uri "https://us-central1-openet.cloudfunctions.net/era5land-meteorology-monthly?region=na" --description "ERA5-Land Monthly Meteorology" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
 ```
