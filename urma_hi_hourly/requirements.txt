@@ -1,0 +1,5 @@
+earthengine-api==1.5.9
+flask==2.3.3
+google-cloud-logging==3.9.0
+refet==0.4.2
+# conda install -c conda-forge libgdal-grib
