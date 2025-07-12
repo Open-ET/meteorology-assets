@@ -14,25 +14,30 @@ import openet.refetgee
 # The full path/ID will be "projects/openet/meteorology/<dataset>/<region>/<timestep>"
 ASSET_FOLDER = 'projects/openet/assets/meteorology/era5land'
 ASSET_DT_FMT = '%Y%m%d'
-# _NAME = 'openet_assets'
+# BUCKET_NAME = 'openet_assets'
 # BUCKET_FOLDER = 'meteorology/era5land'
 PROJECT_NAME = 'openet'
-REGIONS = ['global', 'na', 'sa']
+REGIONS = ['global', 'eu', 'na', 'sa']
 SOURCE_COLL_ID = 'ECMWF/ERA5_LAND/HOURLY'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 START_DAY_OFFSET = 90
 END_DAY_OFFSET = 0
 NODATA = -9999
 TIMESTEP = 'daily'
-# TASK_ID_FMT = f'openet_meteo_era5land_daily_{tgt_dt.strftime("%Y%m%d")}'
-# TASK_ID_RE = re.compile('openet_meteo_era5land_daily_(?P<date>\d{8})$')
-# VARIABLES = [
-#     'temperature_2m_max', 'temperature_2m_min', 'dewpoint_temperature_2m',
-#     'surface_pressure', 'wind_10m', 'surface_solar_radiation_downwards',
-#     # 'surface_net_solar_radiation', 'surface_net_thermal_radiation',
-#     'total_precipitation', 'eto_asce', 'etr_asce',
-# ]
 TODAY_DT = datetime.now(timezone.utc)
+# VARIABLES = [
+#     'temperature_2m_max',
+#     'temperature_2m_min',
+#     'dewpoint_temperature_2m',
+#     'surface_pressure',
+#     'wind_10m',
+#     'surface_solar_radiation_downwards',
+#     # 'surface_net_solar_radiation',
+#     # 'surface_net_thermal_radiation',
+#     'total_precipitation',
+#     'eto_asce',
+#     'etr_asce',
+# ]
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+
@@ -61,17 +66,34 @@ if 'FUNCTION_REGION' in os.environ:
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
     ee.Initialize(credentials)
 else:
-    ee.Initialize()
+    ee.Initialize(ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'))
+    #ee.Initialize(project='openet')
+    #ee.Initialize()
 
 
-def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
+def era5land_daily_export(
+        tgt_dt,
+        region=None,
+        refet_timestep='hourly',
+        fill_edge_cells=True,
+        overwrite_flag=False,
+):
     """Export daily ERA5-Land image for a single date
 
     Parameters
     ----------
     tgt_dt : datetime
-    region : str, optional
+    region : {'global', 'eu', 'na', 'sa'}, optional
+        Daily image assets can be generated for predefined study areas.
+        If not set, the asset will include the full global extent of ERA5-Land.
+    refet_timestep : {'daily', 'hourly' (default)}, optional
+        Daily Reference ET can be computed at the hourly timestep and summed to the day,
+        or at the daily timestep from the aggregated meteorology variables.
+    fill_edge_cells : bool, optional
+        If True, fill any masked pixels within a one cell buffer of the input image.
+        This will fill in small holes and cells along the coasts.
     overwrite_flag : bool, optional
+        If True, overwrite existing assets
 
     Returns
     -------
@@ -91,7 +113,7 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
         'etr_asce': 'mm',
     }
 
-    if not region or region.lower() == 'global':
+    if not region or (region.lower() == 'global'):
         logging.info(f'Export ERA5-Land {TIMESTEP} image - {tgt_dt.strftime("%Y-%m-%d")}')
         export_name = f'openet_meteo_era5land_{TIMESTEP}_{tgt_dt.strftime("%Y%m%d")}'
         # DEADBEEF - No longer saving ERA5-Land assets as COGs
@@ -138,11 +160,11 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
             logging.debug('  Asset already exists, skipping')
             return f'{export_name} - Asset already exists, skipping'
 
-    if not region or region == 'global':
+    if not region or (region.lower() == 'global'):
         start_hour_offset = 0
         crs = 'EPSG:4326'
         # Setting width to 3601 to match source assets was causing issues
-        # Reference ET equations don't work well above ~67 deg
+        # Limiting extent since Reference ET equations don't work well above ~67 deg
         width, height = 3600, 1271
         transform = [0.1, 0, -180.05, 0, -0.1, 67.05]
         # width, height = 3600, 1201
@@ -159,13 +181,24 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
         # # Full global
         # width, height = 3600, 1801
         # transform = [0.1, 0, -180.05, 0, -0.1, 90.05]
-    elif region in ['na']:
+    elif region.lower() in ['eu']:
+        # European Union (not Europe) region
+        start_hour_offset = 0
+        crs = 'EPSG:4326'
+        width, height = 461, 326
+        transform = [0.1, 0, -11.05, 0, -0.1, 67.05]
+    # elif region in ['hi']:
+    #     start_hour_offset = 10
+    #     crs = 'EPSG:4326'
+    #     width, height = 51, 41
+    #     transform = [0.1, 0, -161.05, 0, -0.1, 22.55]
+    elif region.lower() in ['na']:
         # To include southern Greenland, include -33 east (1350 width?)
         start_hour_offset = 6
         crs = 'EPSG:4326'
         width, height = 1160, 601
         transform = [0.1, 0, -168.05, 0, -0.1, 67.05]
-    elif region in ['sa']:
+    elif region.lower() in ['sa']:
         start_hour_offset = 3
         crs = 'EPSG:4326'
         width, height = 480, 691
@@ -210,55 +243,79 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
         logging.info('  Less than 24 hours data for date')
         return f'{export_name} - Less than 24 hours data for date, skipping\n'
 
+    properties = {
+        'build_date': datetime.today().strftime('%Y-%m-%d'),
+        'date': tgt_dt.strftime('%Y-%m-%d'),
+        'geerefet_version': metadata.version('openet-refet-gee'),
+        'reference_et_timestep': refet_timestep.lower(),
+        'start_hour_offset': start_hour_offset,
+        'system:index': tgt_dt.strftime('%Y%m%d'),
+        'system:time_start': millis(start_dt),
+        # 'system:time_start': start_date.millis(),
+    }
+    for band_name, units in var_units.items():
+        if units:
+            properties[f'units_{band_name}'] = units
+
     def wind_magnitude(input_img):
         """Compute hourly wind magnitude from vectors"""
         return (
             ee.Image(input_img.select(['u_component_of_wind_10m'])).pow(2)
             .add(ee.Image(input_img.select(['v_component_of_wind_10m'])).pow(2))
-            .sqrt().rename(['wind_10m'])
+            .sqrt()
+            .rename(['wind_10m'])
         )
 
-    refet_obj = openet.refetgee.Daily.era5_land(
-        src_coll,
-        elev=ee.Image('projects/openet/assets/meteorology/era5land/ancillary/elevation'),
-        lat=ee.Image('projects/openet/assets/meteorology/era5land/ancillary/latitude'),
-    )
+    # The reference ET is computed after masked cell filling is applied in the function
+    # To keep everything consistent, the same filling approach is applied to the meteorology
+    #   variables, but not the eto/etr
+    if refet_timestep.lower() in ['daily', 'day']:
+        # Compute reference ET at the daily timestep
+        eto = openet.refetgee.Daily.era5_land(src_coll, fill_edge_cells=fill_edge_cells).eto
+        etr = openet.refetgee.Daily.era5_land(src_coll, fill_edge_cells=fill_edge_cells).etr
+    elif refet_timestep.lower() in ['hour', 'hourly']:
+        # Compute reference ET at the hourly timestep and then sum to daily
+        def hourly_eto(img):
+            return openet.refetgee.Hourly.era5_land(img, fill_edge_cells=fill_edge_cells).eto
+        def hourly_etr(img):
+            return openet.refetgee.Hourly.era5_land(img, fill_edge_cells=fill_edge_cells).etr
+        eto = ee.Image(ee.ImageCollection(src_coll.map(hourly_eto)).sum())
+        etr = ee.Image(ee.ImageCollection(src_coll.map(hourly_etr)).sum())
+    else:
+        return f'{export_name} - Unsupported timestep {refet_timestep}, skipping'
 
-    properties = {
-        'build_date': datetime.today().strftime('%Y-%m-%d'),
-        'date': tgt_dt.strftime('%Y-%m-%d'),
-        'geerefet_version': metadata.version('openet-refet-gee'),
-        'system:index': tgt_dt.strftime('%Y%m%d'),
-        'system:time_start': millis(start_dt),
-        # 'system:time_start': start_date.millis(),
-    }
+    # Compute the daily meteorology variables
+    tmax = src_coll.select(['temperature_2m']).max()
+    tmin = src_coll.select(['temperature_2m']).min()
+    tmean = src_coll.select(['temperature_2m']).mean()
+    tdew = src_coll.select(['dewpoint_temperature_2m']).mean()
+    wind = ee.Image(ee.ImageCollection(src_coll.map(wind_magnitude)).mean())
+    srad = src_coll.select(['surface_solar_radiation_downwards_hourly']).sum()
+    prcp = src_coll.select(['total_precipitation_hourly']).sum()
+    #pres = src_coll.select(['surface_pressure']).mean()
 
-    for band_name, units in var_units.items():
-        if units:
-            properties[f'units_{band_name}'] = units
-
-    # CGM - Variable list is hardcoded for now so always write version above
-    # if 'eto_asce' in variables or 'etr_asce' in variables:
-    #     properties['geerefet_version'] = metadata.version('openet-refet-gee')
-    #     # properties['geerefet_version'] = openet.refetgee.__version__
+    # Fill any masked pixels along the edge of the land mask
+    # This will fill most coastal pixels and any small holes
+    # TODO: It might be more efficient to apply this to the output image below,
+    #   but it would need to exclude ETo and ETr
+    if fill_edge_cells:
+        def fill_edge_cells(image):
+            img = ee.Image(image)
+            return img.unmask(
+                img.reduceNeighborhood('mean', ee.Kernel.square(1), 'kernel', False)
+                .reproject(img.projection())
+            )
+        tmax = fill_edge_cells(tmax)
+        tmin = fill_edge_cells(tmin)
+        tmean = fill_edge_cells(tmean)
+        tdew = fill_edge_cells(tdew)
+        wind = fill_edge_cells(wind)
+        srad = fill_edge_cells(srad)
+        prcp = fill_edge_cells(prcp)
+        #pres = fill_edge_cells(pres)
 
     output_img = (
-        ee.Image([
-            src_coll.select(['temperature_2m']).max(),
-            src_coll.select(['temperature_2m']).min(),
-            src_coll.select(['temperature_2m']).mean(),
-            src_coll.select(['dewpoint_temperature_2m']).mean(),
-            ee.Image(ee.ImageCollection(src_coll.map(wind_magnitude)).mean()),
-            src_coll.select(['surface_solar_radiation_downwards_hourly']).sum(),
-            src_coll.select(['total_precipitation_hourly']).sum(),
-            refet_obj.eto,
-            refet_obj.etr,
-            # src_coll.select(['surface_pressure']).mean(),
-            # CGM - Do we want other radiation bands?
-            # src_coll.select(['surface_thermal_radiation_downwards_hourly']).sum(),
-            # src_coll.select(['surface_net_solar_radiation']).sum(),
-            # src_coll.select(['surface_net_thermal_radiation']).sum(),
-            ])
+        ee.Image([tmax, tmin, tmean, tdew, wind, srad, prcp, eto, etr])
         .rename([
             'temperature_2m_max',
             'temperature_2m_min',
@@ -270,12 +327,8 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
             'eto_asce',
             'etr_asce',
             # 'surface_pressure',
-            # 'surface_thermal_radiation_downwards',
-            # 'surface_net_solar_radiation',
-            # 'surface_net_thermal_radiation',
-            ])
+        ])
         .set(properties)
-        .unmask(NODATA)
     )
 
     try:
@@ -290,7 +343,7 @@ def era5land_daily_export(tgt_dt, region=None, overwrite_flag=False):
             # pyramidingPolicy='mean',
         )
         # task = ee.batch.Export.image.toCloudStorage(
-        #     image=output_img,
+        #     image=output_img.unmask(NODATA),
         #     description=export_name,
         #     bucket=BUCKET_NAME,
         #     fileNamePrefix=bucket_img.replace('.tif', ''),
@@ -461,17 +514,31 @@ def cron_scheduler(request):
     request_args = request.args
 
     # Region parameter
-    if request_json and 'region' in request_json:
+    if request_json and ('region' in request_json):
         args['region'] = request_json['region']
-    elif request_args and 'region' in request_args:
+    elif request_args and ('region' in request_args):
         args['region'] = request_args['region']
     else:
         args['region'] = None
 
+    if args['region'] and (args['region'] not in REGIONS):
+        abort(400, description=f'region parameter "{args["region"]}" is not supported')
+
+    # Reference ET timestep parameter
+    if request_json and ('refet_timestep' in request_json):
+        refet_timestep = request_json['refet_timestep']
+    elif request_args and ('refet_timestep' in request_args):
+        refet_timestep = request_args['refet_timestep']
+    else:
+        refet_timestep = 'hourly'
+
+    #if refet_timestep and (refet_timestep not in ['hourly', 'daily']):
+    #    abort(400, description=f'reference ET timestep "{refet_timestep}" is not supported')
+
     # Days parameter
-    if request_json and 'days' in request_json:
+    if request_json and ('days' in request_json):
         days = request_json['days']
-    elif request_args and 'days' in request_args:
+    elif request_args and ('days' in request_args):
         days = request_args['days']
     else:
         days = START_DAY_OFFSET - END_DAY_OFFSET
@@ -480,28 +547,28 @@ def cron_scheduler(request):
         days = int(days)
         # args['days'] = int(days)
     except:
-        abort(400, description=f'days parameter could not be parsed')
+        abort(400, description=f'days parameter "{days}" could not be parsed')
 
     # Start/end date parameter
-    if request_json and 'start' in request_json:
+    if request_json and ('start' in request_json):
         start_date = request_json['start']
-    elif request_args and 'start' in request_args:
+    elif request_args and ('start' in request_args):
         start_date = request_args['start']
     else:
         start_date = None
 
-    if request_json and 'end' in request_json:
+    if request_json and ('end' in request_json):
         end_date = request_json['end']
-    elif request_args and 'end' in request_args:
+    elif request_args and ('end' in request_args):
         end_date = request_args['end']
     else:
         end_date = None
 
-    if start_date is None and end_date is None:
+    if (start_date is None) and (end_date is None):
         today_dt = datetime.today()
         start_date = (today_dt - timedelta(days=days)).strftime('%Y-%m-%d')
         end_date = (today_dt - timedelta(days=END_DAY_OFFSET)).strftime('%Y-%m-%d')
-    elif start_date is None or end_date is None:
+    elif (start_date is None) or (end_date is None):
         abort(400, description='Both start and end date must be specified')
 
     try:
@@ -516,26 +583,46 @@ def cron_scheduler(request):
     if args['end_dt'] < args['start_dt']:
         abort(400, description='End date must be after start date')
 
-    # CGM - For now don't allow scheduler calls to overwrite existing assets
-    # if request_json and 'overwrite' in request_json:
-    #     overwrite_flag = request_json['overwrite']
-    # elif request_args and 'overwrite' in request_args:
-    #     overwrite_flag = request_args['overwrite']
-    # else:
-    #     overwrite_flag = 'false'
-    #
-    # if overwrite_flag.lower() in ['true', 't']:
-    #     args['overwrite_flag'] = True
-    # elif overwrite_flag.lower() in ['false', 'f']:
-    #     args['overwrite_flag'] = False
-    # else:
-    #     abort(400, description=f'overwrite "{overwrite_flag}" could not be parsed')
+    # Fill edge cells parameter
+    if request_json and ('fill_edge_cells' in request_json):
+        fill_edge_cells = request_json['fill_edge_cells']
+    elif request_args and ('fill_edge_cells' in request_args):
+        fill_edge_cells = request_args['fill_edge_cells']
+    else:
+        fill_edge_cells = 'false'
 
-    for ingest_dt in sorted(era5land_daily_asset_dates(**args)):
+    if fill_edge_cells.lower() in ['true', 't']:
+        fill_edge_cells = True
+    elif fill_edge_cells.lower() in ['false', 'f']:
+        fill_edge_cells = False
+    else:
+        abort(400, description=f'fill parameter "{fill_edge_cells}" could not be parsed')
+
+    # Overwrite parameter
+    if request_json and ('overwrite' in request_json):
+        overwrite_flag = request_json['overwrite']
+    elif request_args and ('overwrite' in request_args):
+        overwrite_flag = request_args['overwrite']
+    else:
+        overwrite_flag = 'false'
+
+    if overwrite_flag.lower() in ['true', 't']:
+        args['overwrite_flag'] = True
+    elif overwrite_flag.lower() in ['false', 'f']:
+        args['overwrite_flag'] = False
+    else:
+        abort(400, description=f'overwrite parameter "{overwrite_flag}" could not be parsed')
+
+    #
+    for tgt_dt in sorted(era5land_daily_asset_dates(**args)):
         # logging.info(f'Date: {ingest_dt.strftime("%Y-%m-%d")}')
         # response += 'Date: {}\n'.format(ingest_dt.strftime('%Y-%m-%d'))
         response += era5land_daily_export(
-            ingest_dt, region=args['region'], overwrite_flag=args['overwrite_flag']
+            tgt_dt,
+            region=args['region'],
+            refet_timestep=refet_timestep,
+            fill_edge_cells=fill_edge_cells,
+            overwrite_flag=args['overwrite_flag'],
         )
 
     return Response(response, mimetype='text/plain')
@@ -789,6 +876,11 @@ def arg_parse():
         help='End date (exclusive)')
     parser.add_argument(
         '--region', default='na', choices=REGIONS, help='Region')
+    parser.add_argument(
+        '--timestep', default='daily', choices=['hourly', 'daily'],
+        help='Reference ET computation timestep')
+    parser.add_argument(
+        '--fill', default=False, action='store_true', help='Fill edge cells')
     # parser.add_argument(
     #     '--delay', default=0, type=float,
     #     help='Delay (in seconds) between each export tasks')
@@ -798,9 +890,9 @@ def arg_parse():
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
-    parser.add_argument(
-        '--reverse', default=False, action='store_true',
-        help='Process dates in reverse order')
+    # parser.add_argument(
+    #     '--reverse', default=False, action='store_true',
+    #     help='Process dates in reverse order')
     parser.add_argument(
         '--debug', default=logging.INFO, const=logging.DEBUG,
         help='Debug level logging', action='store_const', dest='loglevel')
@@ -814,7 +906,7 @@ if __name__ == '__main__':
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
     # Build the image collection if it doesn't exist
-    if not args.region or args.region.lower() == 'global':
+    if not args.region or (args.region.lower() == 'global'):
         asset_coll_id = f'{ASSET_FOLDER}/{TIMESTEP}'
     else:
         asset_coll_id = f'{ASSET_FOLDER}/{args.region}/{TIMESTEP}'
@@ -831,7 +923,6 @@ if __name__ == '__main__':
         input('Press ENTER to continue')
         ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, asset_coll_id)
 
-
     # # ready_tasks = len(get_ee_tasks().keys())
     #
     # ingest_dt_list = era5land_daily_asset_dates(
@@ -840,7 +931,11 @@ if __name__ == '__main__':
     #
     # for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
     #     response = era5land_daily_export(
-    #         ingest_dt, region=args.region, overwrite_flag=args.overwrite
+    #         ingest_dt,
+    #         region=args.region,
+    #         refet_timestep=args.timestep,
+    #         fill_edge_cells=args.fill,
+    #         overwrite_flag=args.overwrite,
     #     )
     #     # logging.info(f'  {response}')
     #
@@ -854,8 +949,12 @@ if __name__ == '__main__':
     if args.start and args.end:
         data['start'] = args.start.strftime('%Y-%m-%d')
         data['end'] = args.end.strftime('%Y-%m-%d')
+    if args.timestep:
+        data['refet_timestep'] = args.timestep
+    if args.fill:
+        data['fill_edge_cells'] = str(args.fill)
     if args.overwrite:
-        data['overwrite'] = args.overwrite
+        data['overwrite'] = str(args.overwrite)
 
     req = Mock(get_json=Mock(return_value=data), args=data)
     response = cron_scheduler(req)

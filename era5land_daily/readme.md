@@ -6,6 +6,7 @@ ERA5-Land daily meteorology Earth Engine assets.
 
 Collection ID: projects/openet/assets/meteorology/era5land/na/daily
 Collection ID: projects/openet/assets/meteorology/era5land/sa/daily
+Collection ID: projects/openet/assets/meteorology/era5land/eu/daily
 Collection ID: projects/openet/assets/meteorology/era5land/daily
 
 Timestep: daily
@@ -31,6 +32,7 @@ Image name format: YYYYMMDD
 The daily aggregations have different start (and end) times depending on the region.
  - North America ("na"): 6 UTC
  - South America ("sa"): 3 UTC
+ - European Union ("eu"): 0 UTC
  - Global ("global"): 0 UTC
 
 Reference ET was computed from the daily aggregated values, not as a sum of the hourly.
@@ -45,12 +47,14 @@ The asset ingest is currently being managed using Google Cloud Functions
 
 https://console.cloud.google.com/functions/details/us-central1/era5land-meteorology-daily?project=openet
 
-The cloud function is called by the Cloud Scheduler:
+The cloud function is called by the Cloud Scheduler
+
 https://console.cloud.google.com/cloudscheduler?project=openet
 
 ### Set the project ID
 
 Before deploying or calling the cloud functions, the "project" can be set once with the following call, or passed to each gcloud call.
+
 ```
 gcloud config set project openet
 ```
@@ -64,16 +68,19 @@ gcloud functions deploy era5land-meteorology-daily --project openet --no-gen2 --
 ### Calling the cloud function
 
 The functions can be called by passing JSON data to the function.
+
 ```
 gcloud functions call era5land-meteorology-daily --project openet --data '{"start":"2021-07-01","end":"2021-08-01","region":"na"}'
 ```
 
-On Windows, the data parameter is a little different
+On Windows, the data parameter is a little different.
+
 ```
 gcloud functions call era5land-meteorology-daily --project openet --data "{\"date\":\"2020-09-01\"}\"
 ```
 
 If no date arguments are passed it will check the last 90 days for missing assets.
+
 ```
 gcloud functions call era5land-meteorology-daily --project openet --data '{"region":"na"}'
 ```
@@ -81,6 +88,11 @@ gcloud functions call era5land-meteorology-daily --project openet --data '{"regi
 ### Scheduling the job
 
 The "update" parameter will need to be changed "create" the first time the job is scheduled.
+
 ```
-gcloud scheduler jobs update http era5land-meteorology-daily --schedule "7 4 * * *" --uri "https://us-central1-openet.cloudfunctions.net/era5land-meteorology-daily?region=na" --description "ERA5-Land Daily Meteorology" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
+gcloud scheduler jobs update http era5land-meteorology-daily-na --schedule "7 4 * * *" --uri "https://us-central1-openet.cloudfunctions.net/era5land-meteorology-daily?region=na&refet_timestep=daily&fill_edge_cells=false" --description "ERA5-Land Daily Meteorology (North America)" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
+```
+
+```
+gcloud scheduler jobs update http era5land-meteorology-daily-eu --schedule "17 4 * * *" --uri "https://us-central1-openet.cloudfunctions.net/era5land-meteorology-daily?region=eu&refet_timestep=hourly&fill_edge_cells=true" --description "ERA5-Land Daily Meteorology (European Union)" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 2 --attempt-deadline 480s --min-backoff=20s
 ```
