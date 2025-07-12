@@ -26,11 +26,12 @@ BUCKET_FOLDER = 'cimis/daily'
 FUNCTION_URL = 'https://us-central1-openet.cloudfunctions.net'
 FUNCTION_NAME = 'cimis-meteorology-daily-worker'
 PROJECT_NAME = 'openet'
+STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 SOURCE_URL = 'https://spatialcimis.water.ca.gov/cimis'
 # This server stopped updating in 2019 but is useful for filling in missing dates
 #   specifically 2003-10-01 to 2003-12-31 and 2010-11-16 to 2010-11-23
 # SOURCE_URL = 'http://cimis.casil.ucdavis.edu/cimis'
-STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
+
 TASK_LOCATION = 'us-central1'
 TASK_QUEUE = 'ee-single-worker'
 START_DAY_OFFSET = 365
@@ -81,6 +82,7 @@ def cimis_daily_asset_ingest(tgt_dt, variables, workspace='/tmp', overwrite_flag
         Variables to process.  Choices are: 'depth', 'swe'.
     workspace : str
     overwrite_flag : bool, optional
+        If True, overwrite existing assets
 
     Returns
     -------
@@ -678,9 +680,9 @@ def cron_worker(request):
     request_json = request.get_json(silent=True)
     request_args = request.args
 
-    if request_json and 'date' in request_json:
+    if request_json and ('date' in request_json):
         tgt_date = request_json['date']
-    elif request_args and 'date' in request_args:
+    elif request_args and ('date' in request_args):
         tgt_date = request_args['date']
     else:
         abort(400, description='date parameter not set')
@@ -690,9 +692,9 @@ def cron_worker(request):
     except:
         abort(400, description=f'date "{tgt_date}" could not be parsed')
 
-    if request_json and 'overwrite' in request_json:
+    if request_json and ('overwrite' in request_json):
         overwrite_flag = request_json['overwrite']
-    elif request_args and 'overwrite' in request_args:
+    elif request_args and ('overwrite' in request_args):
         overwrite_flag = request_args['overwrite']
     else:
         overwrite_flag = 'false'
@@ -1093,7 +1095,7 @@ if __name__ == '__main__':
     #     # 'days': '60',
     #     'start': args.start.strftime("%Y-%m-%d"),
     #     'end': args.end.strftime("%Y-%m-%d"),
-    #     # 'overwrite': args.overwrite_flag,
+    #     # 'overwrite': str(args.overwrite_flag),
     # }
     # req = Mock(get_json=Mock(return_value=data), args=data)
     # response = cron_scheduler(req)

@@ -17,7 +17,7 @@ ASSET_DT_FMT = '%Y%m%d'
 # BUCKET_NAME = 'openet_assets'
 # BUCKET_FOLDER = 'meteorology/era5land'
 PROJECT_NAME = 'openet'
-REGIONS = ['global', 'eu', 'na', 'sa']
+REGIONS = ['global', 'eu', 'na', 'sa', 'hawaii']
 SOURCE_COLL_ID = 'ECMWF/ERA5_LAND/HOURLY'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 START_DAY_OFFSET = 90
@@ -66,9 +66,7 @@ if 'FUNCTION_REGION' in os.environ:
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
     ee.Initialize(credentials)
 else:
-    ee.Initialize(ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'))
-    #ee.Initialize(project='openet')
-    #ee.Initialize()
+    ee.Initialize()
 
 
 def era5land_daily_export(
@@ -183,15 +181,18 @@ def era5land_daily_export(
         # transform = [0.1, 0, -180.05, 0, -0.1, 90.05]
     elif region.lower() in ['eu']:
         # European Union (not Europe) region
+        # Start hour offset should probably be -1,
+        #   but having an earlier start time might throw off the filterDate calls
+        #   and the difference between 0 and 1 is negligible
         start_hour_offset = 0
         crs = 'EPSG:4326'
         width, height = 461, 326
         transform = [0.1, 0, -11.05, 0, -0.1, 67.05]
-    # elif region in ['hi']:
-    #     start_hour_offset = 10
-    #     crs = 'EPSG:4326'
-    #     width, height = 51, 41
-    #     transform = [0.1, 0, -161.05, 0, -0.1, 22.55]
+    elif region in ['hawaii']:
+        start_hour_offset = 10
+        crs = 'EPSG:4326'
+        width, height = 61, 41
+        transform = [0.1, 0, -160.55, 0, -0.1, 22.55]
     elif region.lower() in ['na']:
         # To include southern Greenland, include -33 east (1350 width?)
         start_hour_offset = 6
@@ -958,4 +959,4 @@ if __name__ == '__main__':
 
     req = Mock(get_json=Mock(return_value=data), args=data)
     response = cron_scheduler(req)
-    print(response.data)
+    #print(response.data)

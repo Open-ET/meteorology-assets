@@ -540,9 +540,9 @@ def cron_scheduler(request):
     response += f'End Date:   {end_dt.strftime("%Y-%m-%d")}\n'
 
     # CGM - For now don't allow scheduler calls to overwrite existing assets
-    # if request_json and 'overwrite' in request_json:
+    # if request_json and ('overwrite' in request_json):
     #     overwrite_flag = request_json['overwrite']
-    # elif request_args and 'overwrite' in request_args:
+    # elif request_args and ('overwrite' in request_args):
     #     overwrite_flag = request_args['overwrite']
     # else:
     #     overwrite_flag = 'false'
