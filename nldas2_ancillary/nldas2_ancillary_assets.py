@@ -17,12 +17,12 @@ logging.getLogger('urllib3').setLevel(logging.INFO)
 
 PROJECT_NAME = 'openet'
 BUCKET_NAME = 'openet_temp'
-BUCKET_FOLDER = 'meteorology/nldas/ancillary'
+BUCKET_FOLDER = 'meteorology/nldas2/ancillary'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 
 
 def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
-    """Ingest NLDAS ancillary assets into Earth Engine
+    """Ingest NLDAS-2 ancillary assets into Earth Engine
 
     Parameters
     ----------
@@ -34,7 +34,7 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
         If True, overwrite existing files (the default is False).
 
     """
-    logging.info('\nNLDAS Ancillary Assets')
+    logging.info('\nNLDAS-2 Ancillary Assets')
 
     output_ws = os.path.join(os.getcwd(), 'ancillary')
     if not os.path.isdir(output_ws):
@@ -43,19 +43,19 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
     nldas_url = 'https://ldas.gsfc.nasa.gov/sites/default/files/ldas/nldas/NLDAS_elevation.nc4'
     nldas_nc = os.path.join(output_ws, nldas_url.split('/')[-1])
 
-    elev_local_tif = os.path.join(output_ws, 'nldas_elev.tif')
-    aspect_local_tif = os.path.join(output_ws, 'nldas_aspect.tif')
-    slope_local_tif = os.path.join(output_ws, 'nldas_slope.tif')
+    elev_local_tif = os.path.join(output_ws, 'nldas2_elev.tif')
+    aspect_local_tif = os.path.join(output_ws, 'nldas2_aspect.tif')
+    slope_local_tif = os.path.join(output_ws, 'nldas2_slope.tif')
 
     elev_bucket_path = f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/elevation.tif'
     aspect_bucket_path = f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/aspect.tif'
     slope_bucket_path = f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/slope.tif'
 
-    elev_asset_id = 'projects/openet/assets/meteorology/nldas/ancillary/elevation'
-    aspect_asset_id = 'projects/openet/assets/meteorology/nldas/ancillary/aspect'
-    slope_asset_id = 'projects/openet/assets/meteorology/nldas/ancillary/slope'
-    lat_asset_id = 'projects/openet/assets/meteorology/nldas/ancillary/latitude'
-    lon_asset_id = 'projects/openet/assets/meteorology/nldas/ancillary/longitude'
+    elev_asset_id = 'projects/openet/assets/meteorology/nldas2/ancillary/elevation'
+    aspect_asset_id = 'projects/openet/assets/meteorology/nldas2/ancillary/aspect'
+    slope_asset_id = 'projects/openet/assets/meteorology/nldas2/ancillary/slope'
+    lat_asset_id = 'projects/openet/assets/meteorology/nldas2/ancillary/latitude'
+    lon_asset_id = 'projects/openet/assets/meteorology/nldas2/ancillary/longitude'
 
     elev_band_name = 'elevation'
     aspect_band_name = 'aspect'
@@ -95,7 +95,7 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
     if (not ee.data.getInfo(elev_asset_id)
             or not ee.data.getInfo(aspect_asset_id)
             or not ee.data.getInfo(slope_asset_id)):
-        logging.info('\nDownloading NLDAS elevation data NetCDF')
+        logging.info('\nDownloading NLDAS-2 elevation data NetCDF')
         logging.debug(f'  {nldas_url}')
         url_download(nldas_url, nldas_nc)
 
@@ -124,10 +124,8 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             height=elev_array.shape[0], width=elev_array.shape[1],
             nodata=nodata_value, transform=output_geo,
             compress='deflate',
-            # compress='lzw',
-            # compress='deflate', predictor=2,
-            # compress='lzw', predictor=1,
         )
+        output_ds.set_band_description(1, 'elevation')
         output_ds.write(elev_array, 1)
         output_ds.close()
 
@@ -157,9 +155,6 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             'properties': {
                 'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
             },
-            # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
-            # 'pyramidingPolicy': 'MEAN',
-            # 'missingData': {'values': [nodata_value]},
         }
         ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
@@ -211,10 +206,8 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             height=aspect_array.shape[0], width=aspect_array.shape[1],
             nodata=nodata_value, transform=output_geo,
             compress='deflate',
-            # compress='lzw',
-            # compress='deflate', predictor=2,
-            # compress='lzw', predictor=1,
         )
+        output_ds.set_band_description(1, 'aspect')
         output_ds.write(aspect_array, 1)
         output_ds.close()
 
@@ -244,9 +237,6 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             'properties': {
                 'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
             },
-            # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
-            # 'pyramidingPolicy': 'MEAN',
-            # 'missingData': {'values': [nodata_value]},
         }
         ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
@@ -291,14 +281,11 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
         logging.debug(f'  {slope_local_tif}')
         output_ds = rasterio.open(
             slope_local_tif, 'w', count=1, driver='GTiff', tiled=True,
-            crs=output_proj, dtype=rasterio.float32,
+            crs=output_proj, dtype=rasterio.float32, compress='deflate',
             height=slope_array.shape[0], width=slope_array.shape[1],
             nodata=nodata_value, transform=output_geo,
-            compress='deflate',
-            # compress='lzw',
-            # compress='deflate', predictor=2,
-            # compress='lzw', predictor=1,
         )
+        output_ds.set_band_description(1, 'slope')
         output_ds.write(slope_array, 1)
         output_ds.close()
 
@@ -328,9 +315,6 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             'properties': {
                 'date_ingested': datetime.datetime.today().strftime('%Y-%m-%d'),
             },
-            # 'startTime': '2000-01-01T00:00:00' + '.000000000Z',
-            # 'pyramidingPolicy': 'MEAN',
-            # 'missingData': {'values': [nodata_value]},
         }
         ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
@@ -353,12 +337,6 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             os.remove(slope_local_tif)
         except:
             pass
-
-    # # Cleanup
-    # try:
-    #     os.remove(nldas_nc)
-    # except:
-    #     pass
 
 
     # Build the latitude and longitude assets in EE from the elevation asset
@@ -447,7 +425,7 @@ def url_download(download_url, output_path, verify=True):
 def arg_parse():
     """"""
     parser = argparse.ArgumentParser(
-        description='Ingest NLDAS ancillary assets into Earth Engine',
+        description='Ingest NLDAS-2 ancillary assets into Earth Engine',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--project', type=str, required=True, help='Earth Engine Project ID')
