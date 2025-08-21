@@ -148,6 +148,8 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
     grb_ds = rasterio.open(grb_path, 'r')
 
     # Hardcoding the shape and projection parameters for now
+    # The transform is being manually shifted 6 cells up/north for better alignment
+    # This adjustment was chosen based on visual inspection of the assets in GEE
     width, height = 321, 225
     gee_transform = [2500, 0, -16879375, 0, -2500, 2481825 - (6 * 2500)]
     # grb_transform = [2500, 0, -16879374.0603126622736454, 0, -2500, 2481825.9654569458216429]
@@ -427,9 +429,9 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    for tgt_dt in date_range(args.start, args.end):
+    for tgt_dt in sorted(date_range(args.start, args.end), reverse=args.reverse):
         print(tgt_dt)
-        for hour in range(0, 24):
+        for hour in sorted(range(0, 24), reverse=True):
             urma_hi_hourly_ingest(
                 tgt_dt=tgt_dt + timedelta(hours=hour),
                 workspace=args.workspace,
