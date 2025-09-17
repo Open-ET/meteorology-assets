@@ -10,15 +10,35 @@ from flask import abort, Response
 from importlib import metadata
 import openet.refetgee
 
-ASSET_COLL_ID = 'projects/openet/assets/meteorology/urma/daily'
+ASSET_COLL_ID = 'projects/openet/assets/meteorology/urma/hawaii/daily'
 ASSET_DT_FMT = '%Y%m%d'
 PROJECT_NAME = 'openet'
-SOURCE_COLL_ID = 'projects/climate-engine-pro/assets/ce-urma-hourly'
+SOURCE_COLL_ID = 'projects/openet/assets/meteorology/urma/hawaii/hourly'
+ANCILLARY_FOLDER = 'projects/openet/assets/meteorology/urma/hawaii/ancillary'
 START_DAY_OFFSET = 90
 END_DAY_OFFSET = 0
-START_HOUR_OFFSET = 6
+START_HOUR_OFFSET = 10
 NODATA = -9999
 TODAY_DT = datetime.now(timezone.utc)
+VARIABLES = [
+    'TMP',
+    'DPT',
+    'SPFH',
+    'PRES',
+    'WDIR',
+    'WIND',
+    'TCDC',
+    'SRAD_TCDC',
+    'ETO',
+    'ETR',
+    # 'UGRD',
+    # 'VGRD',
+    # 'HGT',
+    # 'GUST',
+    # 'VIS',
+    # 'CEIL',
+    # 'HTSGW',
+]
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+
@@ -45,17 +65,21 @@ if 'FUNCTION_REGION' in os.environ:
         'https://www.googleapis.com/auth/earthengine',
     ]
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
-    ee.Initialize(credentials)
+    ee.Initialize(credentials, project=project_id)
 else:
-    ee.Initialize()
+    ee.Initialize(ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'))
+    # ee.Initialize(project='ee-cmorton')
 
 
-def urma_daily_export(tgt_dt, overwrite_flag=False):
-    """Export daily URMA image for a single date
+def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=False):
+    """Export daily URMA Hawaii image for a single date
 
     Parameters
     ----------
     tgt_dt : datetime
+    refet_timestep : {'daily', 'hourly' (default)}, optional
+        Daily Reference ET can be computed at the hourly timestep and summed to the day,
+        or at the daily timestep from the aggregated meteorology variables.
     overwrite_flag : bool, optional
 
     Returns
@@ -64,8 +88,8 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
 
     """
 
-    logging.info(f'Export URMA daily image - {tgt_dt.strftime("%Y-%m-%d")}')
-    export_name = f'openet_meteo_urma_daily_{tgt_dt.strftime("%Y%m%d")}'
+    logging.info(f'Export URMA Hawaii daily image - {tgt_dt.strftime("%Y-%m-%d")}')
+    export_name = f'openet_meteo_urma_hawaii_daily_{tgt_dt.strftime("%Y%m%d")}'
     asset_id = f'{ASSET_COLL_ID}/{tgt_dt.strftime(ASSET_DT_FMT)}'
     # logging.info(f'export_id:   {export_name}')
     # logging.info(f'asset_id:    {asset_id}')
@@ -90,42 +114,53 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
             logging.debug('  Asset already exists, skipping')
             return f'{export_name} - Asset already exists, skipping'
 
-    # This is the spatial grid for the larger "western expansion"
-    width, height = 2345, 1597
-    transform = [2539.703, 0, -3272417.1397942575, 0, -2539.703, 3790838.3367873137]
+    # Hardcoding the shape and projection parameters for now
+    # The transform is being manually shifted 6 cells up/north for better alignment
+    # This adjustment was chosen based on visual inspection of the assets in GEE
+    width, height = 321, 225
+    transform = [2500, 0, -16879375, 0, -2500, 2481825 - (6 * 2500)]
 
-    # This CRS WKT is modified from the GRIB2 CRS to correctly align the images in EE
-    crs = (
-        'PROJCS["NWS CONUS", \n'
-        '  GEOGCS["WGS 84", \n'
-        '    DATUM["World Geodetic System 1984", \n'
-        '      SPHEROID["WGS 84", 6378137.0, 298.257223563, '
-        'AUTHORITY["EPSG","7030"]], \n'
-        '      AUTHORITY["EPSG","6326"]], \n'
-        '    PRIMEM["Greenwich", 0.0, AUTHORITY["EPSG","8901"]], \n'
-        '    UNIT["degree", 0.017453292519943295], \n'
-        '    AXIS["Geodetic longitude", EAST], \n'
-        '    AXIS["Geodetic latitude", NORTH], \n'
-        '    AUTHORITY["EPSG","4326"]], \n'
-        '  PROJECTION["Lambert_Conformal_Conic_1SP"], \n'
-        '  PARAMETER["semi_major", 6371200.0], \n'
-        '  PARAMETER["semi_minor", 6371200.0], \n'
-        '  PARAMETER["central_meridian", -95.0], \n'
-        '  PARAMETER["latitude_of_origin", 25.0], \n'
-        '  PARAMETER["scale_factor", 1.0], \n'
-        '  PARAMETER["false_easting", 0.0], \n'
-        '  PARAMETER["false_northing", 0.0], \n'
-        '  UNIT["m", 1.0], \n'
-        '  AXIS["x", EAST], \n'
-        '  AXIS["y", NORTH]]'
+    # grb_transform = [2500, 0, -16879374.0603126622736454, 0, -2500, 2481825.9654569458216429]
+    wkt = (
+        'PROJCS["unnamed", '
+        '  GEOGCS["Coordinate System imported from GRIB file", \n'
+        '    DATUM["unnamed", SPHEROID["Sphere", 6371200, 0]], \n'
+        '    PRIMEM["Greenwich", 0], \n'
+        '    UNIT["degree", 0.0174532925199433, AUTHORITY["EPSG", "9122"]]], \n'
+        '  PROJECTION["Mercator_2SP"], \n'
+        '  PARAMETER["standard_parallel_1", 20], \n'
+        '  PARAMETER["central_meridian", 0], \n'
+        '  PARAMETER["false_easting", 0], \n'
+        '  PARAMETER["false_northing", 0], \n'
+        '  UNIT["Metre", 1], \n'
+        '  AXIS["Easting", EAST], \n'
+        '  AXIS["Northing", NORTH]]'
     )
-    # crs = src_img.projection().wkt()
+    # crs = rasterio.crs.CRS.from_wkt(wkt)
+    # wkt_str = (
+    #     'PROJCS[\"unnamed\",GEOGCS[\"Coordinate System imported from GRIB file\",'
+    #     'DATUM[\"unnamed\",SPHEROID[\"Sphere\",6371200,0]],PRIMEM[\"Greenwich\",0],'
+    #     'UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],'
+    #     'PROJECTION[\"Mercator_2SP\"],PARAMETER[\"standard_parallel_1\",20],'
+    #     'PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],'
+    #     'PARAMETER[\"false_northing\",0],UNIT[\"Metre\",1],'
+    #     'AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]'
+    # )
+    # extent = [
+    #     transform[2], transform[5] + height * transform[4],
+    #     transform[2] + width * transform[0], transform[5]
+    # ]
+    # logging.debug(f'  Projection: {crs}')
+    # logging.debug(f'  Width:      {width}')
+    # logging.debug(f'  Height:     {height}')
+    # logging.debug(f'  Transform:  {transform}')
+    # logging.debug(f'  Extent:     {extent}')
 
     extent = [
         transform[2], transform[5] + height * transform[4],
         transform[2] + width * transform[0], transform[5]
     ]
-    logging.debug(f'  Projection: {crs}')
+    logging.debug(f'  Projection: {wkt}')
     logging.debug(f'  Width:      {width}')
     logging.debug(f'  Height:     {height}')
     logging.debug(f'  Transform:  {transform}')
@@ -155,50 +190,62 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
         logging.info('  Less than 24 hours data for date')
         return f'{export_name} - Less than 24 hours data for date, skipping\n'
 
-    # Compute reference ET at the hourly timestep and then sum to daily
-    def hourly_refet(img):
-        # Note, this calculation is using NLDAS solar
-        r = openet.refetgee.Hourly.rtma(img, rs='NLDAS')
-        return ee.Image([r.eto, r.etr]).copyProperties(img, ['system:time_start'])
-
-    refet_img = ee.Image(ee.ImageCollection(src_coll.map(hourly_refet)).sum())
-
-    # TODO: Look into returning Rs from openet.refetgee so that the datasets are consistent
-    rs_img = (
-        ee.ImageCollection('NASA/NLDAS/FORA0125_H002')
-        .filterDate(start_date, end_date).first()
-        .select(['shortwave_radiation'])
-        .multiply(0.0036)
-    )
-
-    # # Compute reference ET at the daily timestep
-    # refet_obj = openet.refetgee.Daily.rtma(
-    #     src_coll,
-    #     elev=ee.Image('projects/openet/assets/meteorology/rtma/ancillary/elevation'),
-    #     lat=ee.Image('projects/openet/assets/meteorology/rtma/ancillary/latitude'),
-    # )
+    if refet_timestep.lower() in ['hour', 'hourly']:
+        eto = src_coll.select(['ETO']).sum()
+        etr = src_coll.select(['ETR']).sum()
+        # # Compute reference ET at the hourly timestep and then sum to daily
+        # # Note, this calculation is using the solar radiation computed from total cloud cover
+        # def hourly_refet(img):
+        #     r = openet.refetgee.Hourly.rtma(
+        #         img,
+        #         rs=img.select(['SRAD_TCDC']).multiply(0.0036),
+        #         elev=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/elevation'),
+        #         lat=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
+        #         lon=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
+        #     )
+        #     return ee.Image([r.eto, r.etr]).copyProperties(img, ['system:time_start'])
+        #
+        # refet_img = ee.Image(ee.ImageCollection(src_coll.map(hourly_refet)).sum())
+        # eto = refet_img.select(['eto'])
+        # etr = refet_img.select(['eto'])
+    elif refet_timestep.lower() in ['daily', 'day']:
+        # Compute reference ET at the daily timestep
+        # Note, this calculation is using the solar radiation computed from total cloud cover
+        refet_obj = openet.refetgee.Daily.rtma(
+            src_coll,
+            rs=src_coll.select(['SRAD_TCDC']).sum().multiply(0.0864),
+            elev=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/elevation'),
+            lat=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
+        )
+        eto = refet_obj.eto
+        etr = refet_obj.etr
+    else:
+        return f'{export_name} - Unsupported timestep {refet_timestep}, skipping'
 
     properties = {
         'build_date': TODAY_DT.strftime('%Y-%m-%d'),
         'date': tgt_dt.strftime('%Y-%m-%d'),
         'geerefet_version': metadata.version('openet-refet-gee'),
+        'reference_et_timestep': refet_timestep.lower(),
         'system:index': tgt_dt.strftime('%Y%m%d'),
         'system:time_start': millis(start_dt),
         # 'system:time_start': start_date.millis(),
     }
 
-    # TODO: Confirm the solar radiation band name, but using RS for now
+    # TODO: Confirm the solar radiation band name, but using SRAD for now
     var_units = {
-        'TMP_MAX': 'C',
-        'TMP_MIN': 'C',
-        'TMP': 'C',
+        'TMAX': 'C',
+        'TMIN': 'C',
+        'TAVG': 'C',
         'DPT': 'C',
-        'WIND': 'm s-1',
-        'PCP': 'kg m-2',
-        'ETO_ASCE': 'mm',
-        'ETR_ASCE': 'mm',
+        'SPFH': 'kg kg-1',
         'PRES': 'Pa',
-        'RS': 'MJ m-2 day-1',
+        'WIND': 'm s-1',
+        'TCDC': '%',
+        'SRAD_TCDC': 'MJ m-2 day-1',
+        'ETO': 'mm',
+        'ETR': 'mm',
+        # 'PCP': 'kg m-2',
     }
 
     for band_name, units in var_units.items():
@@ -216,24 +263,28 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
             src_coll.select(['TMP']).min(),
             src_coll.select(['TMP']).mean(),
             src_coll.select(['DPT']).mean(),
-            src_coll.select(['WIND']).mean(),
-            src_coll.select(['PCP']).sum(),
+            src_coll.select(['SPFH']).mean(),
             src_coll.select(['PRES']).mean(),
-            rs_img,
-            refet_img.select(['eto']),
-            refet_img.select(['etr']),
+            src_coll.select(['WIND']).mean(),
+            src_coll.select(['SRAD_TCDC']).sum(),
+            # # Convert to MJ m-2 day-1
+            # src_coll.select(['SRAD_TCDC']).sum().multiply(0.0864),
+            eto,
+            etr,
+            # src_coll.select(['PCP']).sum(),
         ])
         .rename([
-            'TMP_MAX',
-            'TMP_MIN',
-            'TMP',
+            'TMAX',
+            'TMIN',
+            'TAVG',
             'DPT',
-            'WIND',
-            'PCP',
+            'SPFH',
             'PRES',
-            'RS',
-            'ETO_ASCE',
-            'ETR_ASCE',
+            'WIND',
+            'SRAD_TCDC',
+            'ETO',
+            'ETR',
+            # 'PCP',
         ])
         .set(properties)
         # TODO: Check if this unmask call is needed
@@ -246,7 +297,7 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
             description=export_name,
             assetId=asset_id,
             dimensions='{}x{}'.format(width, height),
-            crs=crs,
+            crs=wkt,
             crsTransform='[' + ', '.join(map(str, transform)) + ']',
             maxPixels=int(1E10),
             # pyramidingPolicy='mean',
@@ -271,8 +322,8 @@ def urma_daily_export(tgt_dt, overwrite_flag=False):
     return f'{export_name} - {task.id}\n'
 
 
-def urma_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
-    """Identify dates of missing URMA daily assets
+def daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
+    """Identify dates of missing daily assets
 
     Parameters
     ----------
@@ -287,9 +338,9 @@ def urma_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
     list : datetimes
 
     """
-    logging.info('\nBuilding URMA daily asset date list')
+    logging.info('\nBuilding daily asset date list')
 
-    task_id_re = re.compile(f'openet_meteo_urma(_\w+)?_daily_(?P<date>\d{{8}})$')
+    task_id_re = re.compile(f'openet_meteo_urma_hi_(_\w+)?_daily_(?P<date>\d{{8}})$')
     asset_id_re = re.compile(ASSET_COLL_ID.split('projects/')[-1] + '/(?P<date>\d{8})$')
 
     # Figure out which asset dates need to be ingested
@@ -359,11 +410,21 @@ def urma_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 
 def cron_scheduler(request):
     """Parse JSON/request arguments and queue ingest tasks for a date range"""
-    response = 'Queue URMA daily asset export tasks\n'
+    response = 'Queue URMA Hawaii daily asset export tasks\n'
     args = {}
 
     request_json = request.get_json(silent=True)
     request_args = request.args
+
+    # Reference ET timestep parameter
+    if request_json and ('refet_timestep' in request_json):
+        refet_timestep = request_json['refet_timestep']
+    elif request_args and ('refet_timestep' in request_args):
+        refet_timestep = request_args['refet_timestep']
+    else:
+        refet_timestep = 'hourly'
+    if refet_timestep and (refet_timestep.lower() not in ['hourly', 'daily']):
+        abort(400, description=f'reference ET timestep "{refet_timestep}" is not supported')
 
     # Days parameter
     if request_json and ('days' in request_json):
@@ -372,10 +433,8 @@ def cron_scheduler(request):
         days = request_args['days']
     else:
         days = START_DAY_OFFSET - END_DAY_OFFSET
-
     try:
         days = int(days)
-        # args['days'] = int(days)
     except:
         abort(400, description=f'days parameter could not be parsed')
 
@@ -412,26 +471,39 @@ def cron_scheduler(request):
     if args['end_dt'] < args['start_dt']:
         abort(400, description='End date must be after start date')
 
-    if request_json and ('overwrite' in request_json):
-        overwrite_flag = request_json['overwrite']
-    elif request_args and ('overwrite' in request_args):
-        overwrite_flag = request_args['overwrite']
-    else:
-        overwrite_flag = 'false'
+    args['overwrite_flag'] = parse_boolean_arg(request_json, request_args, 'overwrite', 'false')
+    reverse_flag = parse_boolean_arg(request_json, request_args, 'reverse', 'false')
 
-    if overwrite_flag.lower() in ['true', 't']:
-        args['overwrite_flag'] = True
-    elif overwrite_flag.lower() in ['false', 'f']:
-        args['overwrite_flag'] = False
-    else:
-        abort(400, description=f'overwrite "{overwrite_flag}" could not be parsed')
-
-    for ingest_dt in sorted(urma_daily_asset_dates(**args)):
+    # Process each date
+    for ingest_dt in sorted(daily_asset_dates(**args), reverse=reverse_flag):
         # logging.info(f'Date: {ingest_dt.strftime("%Y-%m-%d")}')
         # response += 'Date: {}\n'.format(ingest_dt.strftime('%Y-%m-%d'))
-        response += urma_daily_export(ingest_dt, overwrite_flag=args['overwrite_flag'])
+        response += urma_hawaii_daily_export(
+            ingest_dt,
+            refet_timestep=refet_timestep,
+            overwrite_flag=args['overwrite_flag']
+        )
 
     return Response(response, mimetype='text/plain')
+
+
+def parse_boolean_arg(request_json, request_args, arg_key, arg_default_str='false'):
+    """Convert the input argument strings from the request JSON or ARGS to boolean"""
+    if request_json and (arg_key in request_json):
+        arg_str = request_json[arg_key]
+    elif request_args and (arg_key in request_args):
+        arg_str = request_args[arg_key]
+    else:
+        arg_str = arg_default_str
+
+    if arg_str.lower() in ['true', 't']:
+        arg_flag = True
+    elif arg_str.lower() in ['false', 'f']:
+        arg_flag = False
+    else:
+        abort(400, description=f'overwrite parameter "{arg_str}" could not be parsed')
+
+    return arg_flag
 
 
 def date_range(start_dt, end_dt, days=1, skip_leap_days=False):
@@ -486,10 +558,10 @@ def get_ee_assets(asset_id, start_dt=None, end_dt=None, retries=4):
     list : Asset IDs
 
     """
-    # # CGM - There is a bug in earthengine-api>=0.1.326 that causes listImages()
-    # #   to return an empty list if the startTime and endTime parameters are set
-    # # Switching to a .aggregate_array(system:index).getInfo() approach for now
-    # #   since getList is flagged for deprecation
+    # CGM - There is a bug in earthengine-api>=0.1.326 that causes listImages()
+    #   to return an empty list if the startTime and endTime parameters are set
+    # Switching to a .aggregate_array(system:index).getInfo() approach for now
+    #   since getList is flagged for deprecation
     coll = ee.ImageCollection(asset_id)
     if start_dt and end_dt:
         coll = coll.filterDate(start_dt.strftime('%Y-%m-%d'), end_dt.strftime('%Y-%m-%d'))
@@ -541,8 +613,7 @@ def get_ee_tasks(states=['RUNNING', 'READY'], verbose=False, retries=6):
             task_list = ee.data.getTaskList()
             # task_list = ee.data.listOperations()
             task_list = sorted([
-                [t['state'], t['description'], t['id']]
-                for t in task_list if t['state'] in states
+                [t['state'], t['description'], t['id']] for t in task_list if t['state'] in states
             ])
             tasks = {t_desc: t_id for t_state, t_desc, t_id in task_list}
             break
@@ -588,7 +659,6 @@ def arg_valid_file(file_path):
     """
     if os.path.isfile(os.path.abspath(os.path.realpath(file_path))):
         return os.path.abspath(os.path.realpath(file_path))
-        # return file_path
     else:
         raise argparse.ArgumentTypeError(f'{file_path} does not exist')
 
@@ -596,7 +666,7 @@ def arg_valid_file(file_path):
 def arg_parse():
     """"""
     parser = argparse.ArgumentParser(
-        description='Build URMA daily assets',
+        description='Build URMA Hawaii daily assets',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--start', type=arg_valid_date, metavar='YYYY-MM-DD',
@@ -604,9 +674,15 @@ def arg_parse():
     parser.add_argument(
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='End date (exclusive)')
+    parser.add_argument(
+        '--timestep', default='daily', choices=['hourly', 'daily'],
+        help='Reference ET computation timestep')
     # parser.add_argument(
     #     '--delay', default=0, type=float,
     #     help='Delay (in seconds) between each export tasks')
+    # parser.add_argument(
+    #     '--ready', default=2500, type=int,
+    #     help='Maximum number of queued READY tasks')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
@@ -638,18 +714,27 @@ if __name__ == '__main__':
         input('Press ENTER to continue')
         ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
 
-    # ingest_dt_list = urma_daily_asset_dates(args.start, args.end, overwrite_flag=args.overwrite)
+    # ingest_dt_list = daily_asset_dates(args.start, args.end, overwrite_flag=args.overwrite)
     # for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
-    #     response = urma_daily_export(ingest_dt, overwrite_flag=args.overwrite)
+    #     response = urma_hawaii_daily_export(
+    #         ingest_dt, refet_timestep=args.timestep, overwrite_flag=args.overwrite
+    #     )
     #     # logging.info(f'  {response}')
+    #
+    #     # ready_tasks += 1
+    #     # ready_tasks = delay_task(ready_tasks, args.delay, args.ready)
 
     from unittest.mock import Mock
     data = {}
     if args.start and args.end:
         data['start'] = args.start.strftime('%Y-%m-%d')
         data['end'] = args.end.strftime('%Y-%m-%d')
+    if args.timestep:
+        data['refet_timestep'] = args.timestep
     if args.overwrite:
         data['overwrite'] = str(args.overwrite)
+    if args.overwrite:
+        data['reverse'] = str(args.reverse)
 
     req = Mock(get_json=Mock(return_value=data), args=data)
     response = cron_scheduler(req)

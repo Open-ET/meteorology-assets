@@ -12,6 +12,7 @@ import numpy as np
 import rasterio
 import rasterio.crs
 import rasterio.warp
+from scipy.ndimage import binary_dilation, generate_binary_structure
 
 logging.getLogger('earthengine-api').setLevel(logging.INFO)
 logging.getLogger('googleapiclient').setLevel(logging.ERROR)
@@ -29,7 +30,7 @@ TODAY_DT = datetime.now(timezone.utc)
 
 
 
-def main(project_id, workspace='/tmp', overwrite_flag=False):
+def main(project_id, workspace='/tmp', overwrite_flag=False, fill_edge_cells=True):
     """Build URMA Hawaii ancillary assets
 
     Parameters
@@ -39,6 +40,8 @@ def main(project_id, workspace='/tmp', overwrite_flag=False):
     workspace : str
     overwrite_flag : bool, optional
         If True, overwrite existing files (the default is False).
+    fill_edge_cells : bool, optional
+        Apply a 1 pixel buffer to the land_mask to include partial land/ocean pixels
 
     Returns
     -------
@@ -121,6 +124,13 @@ def main(project_id, workspace='/tmp', overwrite_flag=False):
     land_mask_array[land_mask_array == 2] = 0
     land_mask_array = land_mask_array.astype(np.uint8)
     land_mask_grb_ds = None
+
+    # Buffer the land mask 1 pixel to include partial land pixels
+    if fill_edge_cells:
+        #print(land_mask_array[165:175, 265:275])
+        struct = generate_binary_structure(2, 1)
+        land_mask_array = binary_dilation(land_mask_array, structure=struct).astype(np.uint8)
+        #print(land_mask_array[165:175, 265:275])
 
     # logging.info('Building output GeoTIFF')
     land_mask_ds = rasterio.open(

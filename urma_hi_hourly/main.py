@@ -24,10 +24,24 @@ SOURCE_URL = 'https://noaa-urma-pds.s3.amazonaws.com'
 STORAGE_CLIENT = storage.Client(project=PROJECT_NAME)
 TODAY_DT = datetime.now(timezone.utc)
 VARIABLES = [
-    'HGT', 'PRES', 'TMP', 'DPT', 'UGRD', 'VGRD', 'SPFH', 'WDIR', 'WIND', 'GUST', 'VIS',
-    # 'CEIL', 'HTSGW',
+    'TMP',
+    'DPT',
+    'SPFH',
+    'PRES',
+    'WDIR',
+    'WIND',
     'TCDC',
-    'SRAD', 'ETO', 'ETR',
+    'SRAD_TCDC',
+    'ETO',
+    'ETR',
+    # # CGM - Remove these bands at some point
+    # 'UGRD',
+    # 'VGRD',
+    # 'HGT',
+    # 'GUST',
+    # 'VIS',
+    # 'CEIL',
+    # 'HTSGW',
 ]
 
 if 'FUNCTION_REGION' in os.environ:
@@ -55,12 +69,16 @@ if 'FUNCTION_REGION' in os.environ:
         'https://www.googleapis.com/auth/earthengine',
     ]
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
-    ee.Initialize(credentials)
+    ee.Initialize(credentials, project=project_id)
 else:
     ee.Initialize(project='ee-cmorton')
 
 
-def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
+def urma_hawaii_hourly_ingest(
+        tgt_dt,
+        workspace='/tmp',
+        overwrite_flag=False,
+):
     """Ingest hourly URMA Hawaii image for a single date
 
     Parameters
@@ -99,6 +117,9 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
     logging.debug(f'  {bucket_path}')
     logging.debug(f'  {asset_id}')
 
+    if not overwrite_flag and ee.data.getInfo(asset_id):
+        return f'{tgt_date} - Asset already exists'
+
     # # Always overwrite temporary files if the asset doesn't exist
     # if os.path.isdir(date_ws):
     #     shutil.rmtree(date_ws)
@@ -113,7 +134,7 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
         elevation_url = 'https://storage.googleapis.com/openet/urma/hawaii/ancillary/elevation.tif'
         latitude_url = 'https://storage.googleapis.com/openet/urma/hawaii/ancillary/latitude.tif'
         longitude_url = 'https://storage.googleapis.com/openet/urma/hawaii/ancillary/longitde.tif'
-        land_mask_path = os.path.join(date_ws, 'land_masmk.tif')
+        land_mask_path = os.path.join(date_ws, 'land_mask.tif')
         elevation_path = os.path.join(date_ws, 'elevation.tif')
         latitude_path = os.path.join(date_ws, 'latitude.tif')
         longitude_path = os.path.join(date_ws, 'longitude.tif')
@@ -127,25 +148,19 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
         latitude_path = os.path.join('..', 'urma_ancillary', 'hawaii', 'hi_latitude.tif')
         longitude_path = os.path.join('..', 'urma_ancillary', 'hawaii', 'hi_longitude.tif')
 
-    try:
-        with rasterio.open(land_mask_path) as src:
-            land_mask_array = src.read(1).astype(np.uint8)
-        with rasterio.open(elevation_path) as src:
-            elevation_array = src.read(1)
-        with rasterio.open(latitude_path) as src:
-            latitude_array = src.read(1)
-        with rasterio.open(longitude_path) as src:
-            longitude_array = src.read(1)
-    except Exception as e:
-        logging.exception(f'Unhandled exception: {e}')
-        return f'{tgt_date} - Ancillary arrays could not be read'
-
     logging.debug('\nDownloading grib files')
-    if overwrite_flag or not os.path.isfile(grb_path):
+    #if overwrite_flag or not os.path.isfile(grb_path):
+    if not os.path.isfile(grb_path):
         url_download(grb_url, grb_path)
+    if not os.path.isfile(grb_path):
+        return f'{tgt_date} - GRB file does not exist'
 
     logging.debug('Opening grib file')
-    grb_ds = rasterio.open(grb_path, 'r')
+    try:
+        grb_ds = rasterio.open(grb_path, 'r')
+    except Exception:
+        # os.path.remove(grb_path)
+        return f'{tgt_date} - GRB file could not be read'
 
     # Hardcoding the shape and projection parameters for now
     # The transform is being manually shifted 6 cells up/north for better alignment
@@ -188,6 +203,20 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
     # logging.debug(f'  Transform:  {transform}')
     # logging.debug(f'  Extent:     {extent}')
 
+    # Read in the ancillary arrays
+    try:
+        with rasterio.open(land_mask_path) as src:
+            land_mask_array = src.read(1).astype(np.uint8)
+        with rasterio.open(elevation_path) as src:
+            elevation_array = src.read(1)
+        with rasterio.open(latitude_path) as src:
+            latitude_array = src.read(1)
+        with rasterio.open(longitude_path) as src:
+            longitude_array = src.read(1)
+    except Exception as e:
+        logging.exception(f'Ancillary arrays could not be read\n{e}')
+        return f'{tgt_date} - Ancillary arrays could not be read'
+
     # logging.debug('Reading hourly arrays')
     hourly_arrays = {}
     var_units = {}
@@ -201,21 +230,31 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
     # Compute solar radiation from cloud cover
     # Should the midpoint time be before or after the target time?
     ra = refet.calcs._ra_hourly(
-        lat=latitude_array * (math.pi / 180), lon=longitude_array * (math.pi / 180),
-        doy=tgt_doy, time_mid=tgt_hour + 0.5, method='asce'
+        lat=latitude_array * (math.pi / 180),
+        lon=longitude_array * (math.pi / 180),
+        doy=tgt_doy,
+        time_mid=tgt_hour + 0.5,
+        method='asce',
     )
     ra = ra * 1000000 / (3600 * 24)  # Convert to W/m2
     nn = -0.0083 * hourly_arrays['TCDC'] + 0.9659
-    hourly_arrays['SRAD'] = ra * (0.25 + nn * 0.5)
+    hourly_arrays['SRAD_TCDC'] = ra * (0.25 + nn * 0.5)
 
     # Compute reference ET
     # TODO: Check if this should use "refet" method
     #   so that Rso calculation considers vapor pressure
     refet_obj = refet.Hourly(
-        tmean=hourly_arrays['TMP'], tdew=hourly_arrays['DPT'] ,
-        rs=hourly_arrays['SRAD'], uz=hourly_arrays['WIND'], zw=10,
-        elev=elevation_array, lat=latitude_array, lon=longitude_array,
-        doy=tgt_doy, time=float(tgt_dt.strftime('%H')), method='asce',
+        tmean=hourly_arrays['TMP'],
+        tdew=hourly_arrays['DPT'] ,
+        rs=hourly_arrays['SRAD_TCDC'],
+        uz=hourly_arrays['WIND'],
+        zw=10,
+        elev=elevation_array,
+        lat=latitude_array,
+        lon=longitude_array,
+        doy=tgt_doy,
+        time=float(tgt_dt.strftime('%H')),
+        method='asce',
         input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1', 'lat': 'deg'},
     )
     hourly_arrays['ETO'] = refet_obj.eto()
@@ -286,8 +325,11 @@ def urma_hi_hourly_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False):
     # TODO: Wrap in a try/except loop
     ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
+    # Always remove local TIF
+    os.remove(local_path)
+
+    # Only remove GRIB file when run from a cloud function
     if 'FUNCTION_REGION' in os.environ:
-        os.remove(local_path)
         os.remove(grb_path)
 
     return f'{tgt_date} - {asset_id}\n'
@@ -403,14 +445,17 @@ def arg_parse():
         '--workspace', metavar='PATH',
         default=os.path.dirname(os.path.abspath(__file__)),
         help='Set the current working directory')
-    parser.add_argument(
-        '--project', type=str, required=True, help='Earth Engine Project ID')
+    # parser.add_argument(
+    #     '--project', type=str, required=True, help='Earth Engine Project ID')
     parser.add_argument(
         '--start', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='Start date')
     parser.add_argument(
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='End date (exclusive)')
+    parser.add_argument(
+        '--delay', default=0, type=float,
+        help='Delay (in seconds) between each export tasks')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
@@ -431,9 +476,26 @@ if __name__ == '__main__':
 
     for tgt_dt in sorted(date_range(args.start, args.end), reverse=args.reverse):
         print(tgt_dt)
-        for hour in sorted(range(0, 24), reverse=True):
-            urma_hi_hourly_ingest(
+        for hour in sorted(range(0, 24), reverse=args.reverse):
+            response = urma_hawaii_hourly_ingest(
                 tgt_dt=tgt_dt + timedelta(hours=hour),
                 workspace=args.workspace,
                 overwrite_flag=args.overwrite,
             )
+            logging.info(f'  {response}')
+
+            if args.delay:
+                time.sleep(args.delay)
+
+    # from unittest.mock import Mock
+    # data = {}
+    # if args.start and args.end:
+    #     data['start'] = args.start.strftime('%Y-%m-%d')
+    #     data['end'] = args.end.strftime('%Y-%m-%d')
+    # # Convert booleans to string to mimic input when deployed
+    # if args.overwrite:
+    #     data['overwrite'] = str(args.overwrite)
+    #
+    # req = Mock(get_json=Mock(return_value=data), args=data)
+    # response = cron_scheduler(req)
+    # print(response.data)
