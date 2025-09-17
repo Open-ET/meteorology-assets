@@ -64,9 +64,9 @@ if 'FUNCTION_REGION' in os.environ:
         'https://www.googleapis.com/auth/earthengine',
     ]
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
-    ee.Initialize(credentials)
+    ee.Initialize(credentials, project=project_id)
 else:
-    ee.Initialize()
+    ee.Initialize(project='ee-cmorton')
 
 
 def era5land_daily_export(
@@ -383,7 +383,12 @@ def era5land_daily_export(
     return f'{export_name} - {task.id}\n'
 
 
-def era5land_daily_asset_dates(start_dt, end_dt, region=None, overwrite_flag=False):
+def era5land_daily_asset_dates(
+        start_dt,
+        end_dt,
+        region=None,
+        overwrite_flag=False,
+):
     """Identify dates of missing ERA5-Land daily assets
 
     Parameters
@@ -402,14 +407,12 @@ def era5land_daily_asset_dates(start_dt, end_dt, region=None, overwrite_flag=Fal
     logging.info('\nBuilding ERA5-Land daily asset date list')
 
     # TODO: Should probably pass in the asset_coll_id instead of building from region
-    if not region or region.lower() == 'global':
+    if not region or (region.lower() == 'global'):
         asset_coll_id = f'{ASSET_FOLDER}/{TIMESTEP}'
     else:
         asset_coll_id = f'{ASSET_FOLDER}/{region}/{TIMESTEP}'
 
-    task_id_re = re.compile(
-        f'openet_meteo_era5land(_\w+)?_{TIMESTEP.lower()}_(?P<date>\d{8})$'
-    )
+    task_id_re = re.compile(f'openet_meteo_era5land(_\w+)?_{TIMESTEP.lower()}_(?P<date>\d{{8}})$')
     asset_id_re = re.compile(asset_coll_id.split('projects/')[-1] + '/(?P<date>\d{8})$')
 
     # Figure out which asset dates need to be ingested
@@ -425,10 +428,13 @@ def era5land_daily_asset_dates(start_dt, end_dt, region=None, overwrite_flag=Fal
 
     # Check if any of the needed dates are currently being exported
     # Check task list before checking asset list in case a task switches
-    #   from running to done before the asset list is retrieved.
+    #   from running to done before the asset list is retrieved
+    # This function is making export calls so ignore ingest tasks
     logging.debug('\nChecking task list')
     task_id_list = [
-        desc.replace('\nAsset ingestion: ', '') for desc in get_ee_tasks().keys()
+        desc.replace('"', '').strip()
+        for desc in get_ee_tasks().keys()
+        if ('Ingest image' not in desc) and ('Asset ingest' not in desc)
     ]
     task_date_list = [
         datetime.strptime(m.group('date'), ASSET_DT_FMT).strftime('%Y-%m-%d')
@@ -509,7 +515,7 @@ def era5land_daily_asset_dates(start_dt, end_dt, region=None, overwrite_flag=Fal
 def cron_scheduler(request):
     """Parse JSON/request arguments and queue ingest tasks for a date range"""
     response = 'Queue ERA5-Land daily asset export tasks\n'
-    args = {'overwrite_flag': False}
+    args = {}
 
     request_json = request.get_json(silent=True)
     request_args = request.args
@@ -532,9 +538,8 @@ def cron_scheduler(request):
         refet_timestep = request_args['refet_timestep']
     else:
         refet_timestep = 'hourly'
-
-    #if refet_timestep and (refet_timestep not in ['hourly', 'daily']):
-    #    abort(400, description=f'reference ET timestep "{refet_timestep}" is not supported')
+    if refet_timestep and (refet_timestep.lower() not in ['hourly', 'daily']):
+        abort(400, description=f'reference ET timestep "{refet_timestep}" is not supported')
 
     # Days parameter
     if request_json and ('days' in request_json):
@@ -543,10 +548,8 @@ def cron_scheduler(request):
         days = request_args['days']
     else:
         days = START_DAY_OFFSET - END_DAY_OFFSET
-
     try:
         days = int(days)
-        # args['days'] = int(days)
     except:
         abort(400, description=f'days parameter "{days}" could not be parsed')
 
@@ -585,37 +588,12 @@ def cron_scheduler(request):
         abort(400, description='End date must be after start date')
 
     # Fill edge cells parameter
-    if request_json and ('fill_edge_cells' in request_json):
-        fill_edge_cells = request_json['fill_edge_cells']
-    elif request_args and ('fill_edge_cells' in request_args):
-        fill_edge_cells = request_args['fill_edge_cells']
-    else:
-        fill_edge_cells = 'false'
+    fill_edge_cells = parse_boolean_arg(request_json, request_args, 'fill_edge_cells', 'false')
+    args['overwrite_flag'] = parse_boolean_arg(request_json, request_args, 'overwrite', 'false')
+    reverse_flag = parse_boolean_arg(request_json, request_args, 'reverse', 'false')
 
-    if fill_edge_cells.lower() in ['true', 't']:
-        fill_edge_cells = True
-    elif fill_edge_cells.lower() in ['false', 'f']:
-        fill_edge_cells = False
-    else:
-        abort(400, description=f'fill parameter "{fill_edge_cells}" could not be parsed')
-
-    # Overwrite parameter
-    if request_json and ('overwrite' in request_json):
-        overwrite_flag = request_json['overwrite']
-    elif request_args and ('overwrite' in request_args):
-        overwrite_flag = request_args['overwrite']
-    else:
-        overwrite_flag = 'false'
-
-    if overwrite_flag.lower() in ['true', 't']:
-        args['overwrite_flag'] = True
-    elif overwrite_flag.lower() in ['false', 'f']:
-        args['overwrite_flag'] = False
-    else:
-        abort(400, description=f'overwrite parameter "{overwrite_flag}" could not be parsed')
-
-    #
-    for tgt_dt in sorted(era5land_daily_asset_dates(**args)):
+    # Process each date
+    for tgt_dt in sorted(era5land_daily_asset_dates(**args), reverse=reverse_flag):
         # logging.info(f'Date: {ingest_dt.strftime("%Y-%m-%d")}')
         # response += 'Date: {}\n'.format(ingest_dt.strftime('%Y-%m-%d'))
         response += era5land_daily_export(
@@ -627,6 +605,25 @@ def cron_scheduler(request):
         )
 
     return Response(response, mimetype='text/plain')
+
+
+def parse_boolean_arg(request_json, request_args, arg_key, arg_default_str='false'):
+    """Convert the input argument strings from the request JSON or ARGS to boolean"""
+    if request_json and (arg_key in request_json):
+        arg_str = request_json[arg_key]
+    elif request_args and (arg_key in request_args):
+        arg_str = request_args[arg_key]
+    else:
+        arg_str = arg_default_str
+
+    if arg_str.lower() in ['true', 't']:
+        arg_flag = True
+    elif arg_str.lower() in ['false', 'f']:
+        arg_flag = False
+    else:
+        abort(400, description=f'overwrite parameter "{arg_str}" could not be parsed')
+
+    return arg_flag
 
 
 def date_range(start_dt, end_dt, days=1, skip_leap_days=False):
@@ -859,7 +856,6 @@ def arg_valid_file(file_path):
     """
     if os.path.isfile(os.path.abspath(os.path.realpath(file_path))):
         return os.path.abspath(os.path.realpath(file_path))
-        # return file_path
     else:
         raise argparse.ArgumentTypeError(f'{file_path} does not exist')
 
@@ -891,9 +887,9 @@ def arg_parse():
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
-    # parser.add_argument(
-    #     '--reverse', default=False, action='store_true',
-    #     help='Process dates in reverse order')
+    parser.add_argument(
+        '--reverse', default=False, action='store_true',
+        help='Process dates in reverse order')
     parser.add_argument(
         '--debug', default=logging.INFO, const=logging.DEBUG,
         help='Debug level logging', action='store_const', dest='loglevel')
@@ -927,10 +923,11 @@ if __name__ == '__main__':
     # # ready_tasks = len(get_ee_tasks().keys())
     #
     # ingest_dt_list = era5land_daily_asset_dates(
-    #     args.start, args.end, region=args.region, overwrite_flag=args.overwrite
+    #     args.start, args.end, region=args.region,
+    #     overwrite_flag=args.overwrite, reverse_flag=args.reverse
     # )
     #
-    # for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
+    # for ingest_dt in ingest_dt_list:
     #     response = era5land_daily_export(
     #         ingest_dt,
     #         region=args.region,
@@ -952,10 +949,13 @@ if __name__ == '__main__':
         data['end'] = args.end.strftime('%Y-%m-%d')
     if args.timestep:
         data['refet_timestep'] = args.timestep
+    # Convert booleans to string to mimic input when deployed
     if args.fill:
         data['fill_edge_cells'] = str(args.fill)
     if args.overwrite:
         data['overwrite'] = str(args.overwrite)
+    if args.reverse:
+        data['reverse'] = str(args.reverse)
 
     req = Mock(get_json=Mock(return_value=data), args=data)
     response = cron_scheduler(req)
