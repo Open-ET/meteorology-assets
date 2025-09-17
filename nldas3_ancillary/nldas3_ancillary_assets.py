@@ -81,12 +81,14 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
 
     nodata_value = -9999
 
-    output_proj = 'EPSG:4326'
-    output_geo = [0.01, 0, -168.995, 0, -0.01, 71.995]    # RasterIO transform
-    # output_shape = (11700, 6500)
-    # output_extent = [
-    #     output_geo[2], output_geo[5] + output_shape[0] * output_geo[4],
-    #     output_geo[2] + output_shape[1] * output_geo[0], output_geo[5]
+    crs = 'EPSG:4326'
+    # transform = [0.01, 0, -169.0, 0, -0.01, 72.0]
+    transform = [0.01, 0, -168.995, 0, -0.01, 71.995]
+    # transform = [0.01, 0, -168.995, 0, -0.01, 72.005]
+    # shape = (11700, 6500)
+    # extent = [
+    #     transform[2], transform[5] + output_shape[0] * transform[4],
+    #     transform[2] + output_shape[1] * transform[0], transform[5]
     # ]
 
     logging.info('\nInitializing Earth Engine')
@@ -129,8 +131,7 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
         logging.debug(f'  {elev_local_path}')
         output_ds = rasterio.open(
             elev_local_path, 'w', count=1, dtype=rasterio.float32, nodata=nodata_value,
-            driver='GTiff', tiled=True, compress='deflate',
-            transform=output_geo, crs=output_proj,
+            driver='GTiff', tiled=True, compress='deflate', transform=transform, crs=crs,
             height=elev_array.shape[0], width=elev_array.shape[1],
         )
         output_ds.set_band_description(1, elev_band_name)
@@ -172,8 +173,7 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
         logging.debug(f'  {mask_local_path}')
         output_ds = rasterio.open(
             mask_local_path, 'w', count=1, dtype=rasterio.uint8, nodata=0,
-            driver='GTiff', tiled=True, compress='deflate',
-            transform=output_geo, crs=output_proj,
+            driver='GTiff', tiled=True, compress='deflate', transform=transform, crs=crs,
             height=mask_array.shape[0], width=mask_array.shape[1],
         )
         output_ds.set_band_description(1, mask_band_name)
@@ -225,8 +225,7 @@ def main(project_id, zero_elev_nodata_flag=False, overwrite_flag=False):
             logging.debug(f'  {local_path}')
             output_ds = rasterio.open(
                 local_path, 'w', count=1, dtype=rasterio.float32, nodata=nodata_value,
-                driver='GTiff', tiled=True, compress='deflate',
-                transform=output_geo, crs=output_proj,
+                driver='GTiff', tiled=True, compress='deflate', transform=transform, crs=crs,
                 height=array.shape[0], width=array.shape[1],
             )
             output_ds.set_band_description(1, band_name)

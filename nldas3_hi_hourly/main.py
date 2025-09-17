@@ -6,7 +6,6 @@ import json
 # import logging
 import os
 import pprint
-import random
 import re
 import shutil
 import sys
@@ -25,6 +24,7 @@ import rasterio.warp
 import refet
 import requests
 import s3fs
+import xarray as xr
 
 if 'FUNCTION_REGION' in os.environ:
     from google.cloud import logging as cloudlogging
@@ -45,10 +45,10 @@ logging.getLogger('requests').setLevel(logging.INFO)
 logging.getLogger('s3fs').setLevel(logging.INFO)
 logging.getLogger('urllib3').setLevel(logging.INFO)
 
-ASSET_COLL_ID = 'projects/openet/assets/meteorology/nldas3/hourly_beta'
+ASSET_COLL_ID = 'projects/openet/assets/meteorology/nldas3/hawaii/hourly'
 ASSET_DT_FMT = '%Y%m%d%H'
 BUCKET_NAME = 'openet_assets'
-BUCKET_FOLDER = 'meteorology/nldas3/hourly_beta'
+BUCKET_FOLDER = 'meteorology/nldas3/hawaii/hourly'
 #FUNCTION_URL = 'https://us-central1-openet.cloudfunctions.net'
 #FUNCTION_NAME = 'nldas3-meteorology-hourly-worker'
 NC_URL = 's3://nasa-waterinsight/NLDAS3/forcing/hourly'
@@ -95,7 +95,7 @@ def hourly_asset_ingest(
         workspace='/tmp',
         overwrite_flag=False,
 ):
-    """Build and ingest NLDAS-3 hourly meteorology assets into Earth Engine
+    """Build and ingest NLDAS-3 Hawaii hourly meteorology assets into Earth Engine
 
     Parameters
     ----------
@@ -114,8 +114,8 @@ def hourly_asset_ingest(
     """
     tgt_date = tgt_dt.strftime('%Y-%m-%d')
 
-    logging.info(f'\nOpenET NLDAS-3 hourly assets - {tgt_date}')
-    # response = f'Ingest NLDAS-3 hourly assets - {tgt_date}\n'
+    logging.info(f'\nOpenET NLDAS-3 Hawaii hourly assets - {tgt_date}')
+    # response = f'Ingest NLDAS-3 Hawaii hourly assets - {tgt_date}\n'
 
     date_ws = os.path.join(
         workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%m'), tgt_dt.strftime('%d')
@@ -127,12 +127,26 @@ def hourly_asset_ingest(
     nc_file_url = f'{NC_URL}/{tgt_dt.strftime("%Y%m")}/{nc_file_name}'
 
     crs = 'EPSG:4326'
-    transform = [0.01, 0, -169.0, 0, -0.01, 72.0]
-    # transform = [0.01, 0, -168.995, 0, -0.01, 71.995]
-    # transform = [0.01, 0, -168.995, 0, -0.01, 72.005]
+    # Start with the full NLDAS-3 extent and transform
+    extent = [-168.995, 6.995, -51.995, 71.995]
+    transform = [0.01, 0, -168.995, 0, -0.01, 71.995]
     width, height = 11700, 6500
-    # x_offset = 0
-    # y_offset = 0
+    # # extent = [-169.0, 7.0, -52.0, 72.0]
+    # # transform = [0.01, 0, -169.0, 0, -0.01, 72.0]
+
+    # Hawaii parameters
+    width = 600
+    height = 400
+    x_offset = 850
+    y1_offset = 4950                         # Offset from the top to the top
+    y0_offset = 6500 - y1_offset - height    # Offset from the bottom to the bottom
+    extent = [
+        extent[0] + x_offset * 0.01,
+        extent[3] - (y1_offset + height) * 0.01,
+        extent[0] + (x_offset + width) * 0.01,
+        extent[3] - y1_offset * 0.01,
+    ]
+    transform = [0.01, 0, extent[0], 0, -0.01, extent[3]]
 
     # The keys are the band names of the asset
     # The values are the band names in the download request
@@ -219,10 +233,12 @@ def hourly_asset_ingest(
             logging.exception(f'Unhandled exception: {e}')
             return f'{tgt_date} - Land mask array could not be read'
 
-    # # Assume x offset is 0 for now
-    # if x_offset or y_offset:
-    #     land_mask_array = land_mask_array[y_offset: height + y_offset, :]
-    #     elevation_array = elevation_array[y_offset: height + y_offset, :]
+    # Assume x offset is 0 for now
+    if x_offset or y0_offset:
+        land_mask_array = land_mask_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
+        elevation_array = elevation_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
+        latitude_array = latitude_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
+        longitude_array = longitude_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
 
     # Always overwrite temporary files if the asset doesn't exist
     # if 'FUNCTION_REGION' in os.environ and os.path.isdir(date_ws):
@@ -230,35 +246,59 @@ def hourly_asset_ingest(
     if not os.path.isdir(date_ws):
         os.makedirs(date_ws)
 
-    # if not os.path.isfile(file_path) or overwrite_flag:
-    if not os.path.isfile(nc_file_path):
-        logging.info('Downloading source netcdf')
-        logging.info(f'  {nc_file_url}')
-        s3 = s3fs.S3FileSystem({'anon': True})
-        s3.download(nc_file_url.replace('s3://', ''), nc_file_path)
+    # # DEADBEEF - Old code for downloading the NetCDF locally
+    # # if not os.path.isfile(file_path) or overwrite_flag:
+    # if not os.path.isfile(nc_file_path):
+    #     logging.info('Downloading source netcdf')
+    #     logging.info(f'  {nc_file_url}')
+    #     s3 = s3fs.S3FileSystem({'anon': True})
+    #     s3.download(nc_file_url.replace('s3://', ''), nc_file_path)
+    #
+    # # Check if the file was downloaded
+    # if not os.path.isfile(nc_file_path):
+    #     logging.warning(f'  {nc_file_name} does not exist -skipping')
+    #     return f'{tgt_date} - {nc_file_name} does not exist - skipping'
+    #
+    # # TODO: Update min size and look for other ways to detect incomplete netcdf files
+    # logging.debug('Checking netcdf')
+    # logging.info(f'  {nc_file_path}')
+    # if os.path.getsize(nc_file_path) < 2000000:
+    #     logging.warning(f'  {nc_file_name} is incomplete - removing')
+    #     os.remove(nc_file_path)
+    #     return f'{tgt_date} - {nc_file_name} is incomplete - removing'
 
-    # Check if the file was downloaded
-    if not os.path.isfile(nc_file_path):
-        logging.warning(f'  {nc_file_name} does not exist -skipping')
-        return f'{tgt_date} - {nc_file_name} does not exist - skipping'
+    # # # Open the NetCDF
+    # # try:
+    # #     logging.info('Opening netcdf')
+    # #     src_ds = netCDF4.Dataset(nc_file_path)
+    # # except Exception as e:
+    # #     logging.warning(f'  {nc_file_name} error opening file - skipping')
+    # #     logging.warning(f'  Exception: {e}')
+    # #     # os.remove(nc_file_path)
+    # #     return f'{tgt_date} - {nc_file_name} could not be opened - skipping'
+    #
+    # # Try opening using xarray instead of netcdf4
+    # try:
+    #     logging.info('Opening netcdf')
+    #     src_ds = xr.open_dataset(nc_file_path, engine="h5netcdf")
+    # except Exception as e:
+    #     logging.warning(f'  {nc_file_name} error opening file - skipping')
+    #     logging.warning(f'  Exception: {e}')
+    #     return f'{tgt_date} - {nc_file_name} could not be opened - skipping'
 
-    # TODO: Update min size and look for other ways to detect incomplete netcdf files
-    logging.debug('Checking netcdf')
-    logging.info(f'  {nc_file_path}')
-    if os.path.getsize(nc_file_path) < 2000000:
-        logging.warning(f'  {nc_file_name} is incomplete - removing')
-        os.remove(nc_file_path)
-        return f'{tgt_date} - {nc_file_name} is incomplete - removing'
 
-    # Open the NetCDF
+    # Testing out reading directly from the bucket instead of downloading
+    logging.info('\nOpening the netcdf file from the bucket')
     try:
-        logging.info('Opening netcdf')
-        src_ds = netCDF4.Dataset(nc_file_path)
+        s3 = s3fs.S3FileSystem({'anon': True})
+        logging.info(f'  {nc_file_url}')
+        src_f = s3.open(nc_file_url)
+        src_ds = xr.open_dataset(src_f, engine="h5netcdf")
     except Exception as e:
         logging.warning(f'  {nc_file_name} error opening file - skipping')
         logging.warning(f'  Exception: {e}')
-        # os.remove(nc_file_path)
         return f'{tgt_date} - {nc_file_name} could not be opened - skipping'
+
 
     # Iterate by hour then by variable
     for hour in hours:
@@ -294,9 +334,17 @@ def hourly_asset_ingest(
                     hourly_arrays[variable] = None
                     continue
 
-                # Read in the hourly data
+                # Read in the hourly data for the target variable and hour of day
+                # Select variable, hour of day, and clip to the target extent
                 try:
-                    nc_array = src_ds[nc_var_names[variable]][hour, :].data
+                    var_ds = (
+                        src_ds[nc_var_names[variable]]
+                        .isel(time=hour, lat=slice(y0_offset, y0_offset+height), lon=slice(x_offset, x_offset+width))
+                        # CGM - Slicing using the lat/lon is shifting the grid one cell to the right
+                        #   maybe because of rounding?
+                        # .isel(time=hour).sel(lat=slice(extent[1], extent[3]), lon=slice(extent[0], extent[2]))
+                    )
+                    nc_array = var_ds.to_numpy()
                 except Exception as e:
                     logging.warning(f'  Error reading array - skipping')
                     logging.warning(f'  Exception: {e}')
@@ -311,15 +359,8 @@ def hourly_asset_ingest(
                     continue
                     # return f'{tgt_date} - {variable} array is all nodata'
 
-                nc_array = np.flipud(nc_array[:, :])
-
-                # # Clip arrays if offset values are set
-                # if x_offset or y_offset:
-                #     hourly_arrays[variable] = nc_array[
-                #         y_offset: height + y_offset, x_offset: width + x_offset,
-                #     ]
-                # else:
-                hourly_arrays[variable] = nc_array[:, :]
+                hourly_arrays[variable] = np.flipud(nc_array[:, :])
+                # hourly_arrays[variable] = nc_array[:, :]
 
                 del nc_array
 
@@ -444,6 +485,7 @@ def hourly_asset_ingest(
             'doy': int(hour_dt.strftime('%j')),
             'hour': int(hour_dt.strftime('%H')),
             'source': nc_file_url,
+            'status': 'beta',
         }
         if ('eto_asce' in variables) or ('etr_asce' in variables):
             properties['refet_version'] = importlib_metadata.version("refet")
@@ -517,6 +559,8 @@ def hourly_asset_ingest(
 
     src_ds.close()
     del src_ds
+    src_f.close()
+    del src_f
 
     if ('eto_asce' in variables) or ('etr_asce' in variables):
         del elevation_array, land_mask_array, latitude_array, longitude_array
@@ -564,32 +608,32 @@ def hourly_asset_dates(start_dt, end_dt, hours=list(range(0, 24)), overwrite_fla
         ', '.join(map(lambda x: x.strftime('%Y%m%d%H'), tgt_dt_list))
     ))
 
-    # Check if any of the needed dates are currently being ingested
-    # Check task list before checking asset list in case a task switches
-    #   from running to done before the asset list is retrieved.
-    logging.debug('\nChecking task list')
-    task_id_list = [
-        desc.replace('\nAsset ingestion: ', '')
-        for desc in get_ee_tasks(states=['RUNNING', 'READY']).keys()
-    ]
-    task_date_list = [
-        datetime.strptime(m.group('date'), ASSET_DT_FMT).strftime('%Y%m%d%H')
-        for task_id in task_id_list
-        for m in [task_id_re.search(task_id)] if m
-    ]
-    logging.debug(f'\nTask dates: {", ".join(task_date_list)}')
-
-    # Switch date list to be dates that are missing
-    tgt_dt_list = [
-        dt for dt in tgt_dt_list
-        if overwrite_flag or dt.strftime('%Y%m%d%H') not in task_date_list
-    ]
-    if not tgt_dt_list:
-        logging.info('No dates to process after checking ready/running tasks')
-        return []
-    logging.debug('\nDates (after filtering tasks): {}'.format(
-        ', '.join(map(lambda x: x.strftime('%Y%m%d%H'), tgt_dt_list))
-    ))
+    # # Check if any of the needed dates are currently being ingested
+    # # Check task list before checking asset list in case a task switches
+    # #   from running to done before the asset list is retrieved.
+    # logging.debug('\nChecking task list')
+    # task_id_list = [
+    #     desc.replace('\nAsset ingestion: ', '')
+    #     for desc in get_ee_tasks(states=['RUNNING', 'READY']).keys()
+    # ]
+    # task_date_list = [
+    #     datetime.strptime(m.group('date'), ASSET_DT_FMT).strftime('%Y%m%d%H')
+    #     for task_id in task_id_list
+    #     for m in [task_id_re.search(task_id)] if m
+    # ]
+    # logging.debug(f'\nTask dates: {", ".join(task_date_list)}')
+    #
+    # # Switch date list to be dates that are missing
+    # tgt_dt_list = [
+    #     dt for dt in tgt_dt_list
+    #     if overwrite_flag or dt.strftime('%Y%m%d%H') not in task_date_list
+    # ]
+    # if not tgt_dt_list:
+    #     logging.info('No dates to process after checking ready/running tasks')
+    #     return []
+    # logging.debug('\nDates (after filtering tasks): {}'.format(
+    #     ', '.join(map(lambda x: x.strftime('%Y%m%d%H'), tgt_dt_list))
+    # ))
 
     # Check if the assets already exist
     # For now, assume the collection exists
@@ -641,7 +685,7 @@ def hourly_asset_dates(start_dt, end_dt, hours=list(range(0, 24)), overwrite_fla
 #
 #         # Using the default name in the request can create duplicate tasks
 #         # Trying out adding the timestamp to avoid this for testing/debug
-#         name = f'{parent}/tasks/nldas3_meteorology_hourly_' \
+#         name = f'{parent}/tasks/nldas3_hawaii_meteorology_hourly_' \
 #                f'{tgt_dt.strftime("%Y%m%d%H")}_' \
 #                f'{datetime.today().strftime("%Y%m%d%H%M%S")}'
 #         # name = f'{parent}/tasks/nldas3_hourly_asset_{tgt_dt.strftime("%Y%m%d%H")}'
@@ -1028,7 +1072,7 @@ def arg_valid_file(file_path):
 def arg_parse():
     """"""
     parser = argparse.ArgumentParser(
-        description='Ingest NLDAS-3 hourly assets into Earth Engine',
+        description='Ingest NLDAS-3 Hawaii hourly assets into Earth Engine',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--workspace', metavar='PATH',
@@ -1071,19 +1115,19 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    # # Build the image collection if it doesn't exist
-    # logging.debug('Image Collection: {}'.format(ASSET_COLL_ID))
-    # asset_folder = ASSET_COLL_ID.rsplit('/', 1)[0]
-    # if not ee.data.getInfo(asset_folder):
-    #     logging.info('\nFolder does not exist and will be built'
-    #                  '\n  {}'.format(asset_folder))
-    #     input('Press ENTER to continue')
-    #     ee.data.createAsset({'type': 'FOLDER'}, asset_folder)
-    # if not ee.data.getInfo(ASSET_COLL_ID):
-    #     logging.info('\nImage collection does not exist and will be built'
-    #                  '\n  {}'.format(ASSET_COLL_ID))
-    #     input('Press ENTER to continue')
-    #     ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
+    # Build the image collection if it doesn't exist
+    logging.debug('Image Collection: {}'.format(ASSET_COLL_ID))
+    asset_folder = ASSET_COLL_ID.rsplit('/', 1)[0]
+    if not ee.data.getInfo(asset_folder):
+        logging.info('\nFolder does not exist and will be built'
+                     '\n  {}'.format(asset_folder))
+        input('Press ENTER to continue')
+        ee.data.createAsset({'type': 'FOLDER'}, asset_folder)
+    if not ee.data.getInfo(ASSET_COLL_ID):
+        logging.info('\nImage collection does not exist and will be built'
+                     '\n  {}'.format(ASSET_COLL_ID))
+        input('Press ENTER to continue')
+        ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
 
     ingest_dt_list = hourly_asset_dates(
         start_dt=args.start, end_dt=args.end, overwrite_flag=args.overwrite
