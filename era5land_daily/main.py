@@ -73,7 +73,7 @@ def era5land_daily_export(
         tgt_dt,
         region=None,
         refet_timestep='hourly',
-        fill_edge_cells=True,
+        fill_edge_cells=0,
         overwrite_flag=False,
 ):
     """Export daily ERA5-Land image for a single date
@@ -87,8 +87,8 @@ def era5land_daily_export(
     refet_timestep : {'daily', 'hourly' (default)}, optional
         Daily Reference ET can be computed at the hourly timestep and summed to the day,
         or at the daily timestep from the aggregated meteorology variables.
-    fill_edge_cells : bool, optional
-        If True, fill any masked pixels within a one cell buffer of the input image.
+    fill_edge_cells : int, optional
+        If greater than zero, fill any masked pixels within a buffer of the cells count.
         This will fill in small holes and cells along the coasts.
     overwrite_flag : bool, optional
         If True, overwrite existing assets
@@ -300,20 +300,20 @@ def era5land_daily_export(
     # TODO: It might be more efficient to apply this to the output image below,
     #   but it would need to exclude ETo and ETr
     if fill_edge_cells:
-        def fill_edge_cells(image):
+        def fill(image):
             img = ee.Image(image)
             return img.unmask(
-                img.reduceNeighborhood('mean', ee.Kernel.square(1), 'kernel', False)
+                img.reduceNeighborhood('mean', ee.Kernel.square(fill_edge_cells), 'kernel', False)
                 .reproject(img.projection())
             )
-        tmax = fill_edge_cells(tmax)
-        tmin = fill_edge_cells(tmin)
-        tmean = fill_edge_cells(tmean)
-        tdew = fill_edge_cells(tdew)
-        wind = fill_edge_cells(wind)
-        srad = fill_edge_cells(srad)
-        prcp = fill_edge_cells(prcp)
-        #pres = fill_edge_cells(pres)
+        tmax = fill(tmax)
+        tmin = fill(tmin)
+        tmean = fill(tmean)
+        tdew = fill(tdew)
+        wind = fill(wind)
+        srad = fill(srad)
+        prcp = fill(prcp)
+        #pres = fill(pres)
 
     output_img = (
         ee.Image([tmax, tmin, tmean, tdew, wind, srad, prcp, eto, etr])
@@ -587,8 +587,15 @@ def cron_scheduler(request):
     if args['end_dt'] < args['start_dt']:
         abort(400, description='End date must be after start date')
 
-    # Fill edge cells parameter
-    fill_edge_cells = parse_boolean_arg(request_json, request_args, 'fill_edge_cells', 'false')
+    # Fill edge cells parameter is an integer now and not a boolean
+    if request_json and ('fill_edge_cells' in request_json):
+        fill_edge_cells = int(request_json['fill_edge_cells'])
+    elif request_args and ('fill_edge_cells' in request_args):
+        fill_edge_cells = int(request_args['fill_edge_cells'])
+    else:
+        fill_edge_cells = 0
+    # fill_edge_cells = parse_boolean_arg(request_json, request_args, 'fill_edge_cells', 'false')
+
     args['overwrite_flag'] = parse_boolean_arg(request_json, request_args, 'overwrite', 'false')
     reverse_flag = parse_boolean_arg(request_json, request_args, 'reverse', 'false')
 
@@ -877,7 +884,7 @@ def arg_parse():
         '--timestep', default='daily', choices=['hourly', 'daily'],
         help='Reference ET computation timestep')
     parser.add_argument(
-        '--fill', default=False, action='store_true', help='Fill edge cells')
+        '--fill', default=0, type=int, help='Fill edge cells buffer size')
     # parser.add_argument(
     #     '--delay', default=0, type=float,
     #     help='Delay (in seconds) between each export tasks')
