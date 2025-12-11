@@ -236,7 +236,8 @@ def urma_hawaii_hourly_ingest(
         time_mid=tgt_hour + 0.5,
         method='asce',
     )
-    ra = ra * 1000000 / (3600 * 24)  # Convert to W/m2
+    # Convert from MJ m-2 h-1 to W m-2
+    ra = ra * 1000000 / 3600  # Convert to W/m2
     nn = -0.0083 * hourly_arrays['TCDC'] + 0.9659
     hourly_arrays['SRAD_TCDC'] = ra * (0.25 + nn * 0.5)
 
@@ -454,7 +455,7 @@ def arg_parse():
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='End date (exclusive)')
     parser.add_argument(
-        '--delay', default=0, type=float,
+        '--delay', default=1, type=float,
         help='Delay (in seconds) between each export tasks')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',

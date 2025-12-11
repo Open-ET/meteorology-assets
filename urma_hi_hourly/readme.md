@@ -21,7 +21,7 @@ Image name format: YYYYMMDDHH
 | WDIR      | Wind direction (from which blowing) | deg     |
 | WIND      | Wind speed (@ 10m)                  | m s-1   |
 | TCDC      | Total cloud cover                   | %       |
-| SRAD      | Solar radiation (from TCDC)         | W m-2   |
+| SRAD_TCDC | Solar radiation (from TCDC)         | W m-2   |
 | ETO       | ASCE reference ET (grass)           | mm      |
 | ETR       | ASCE reference ET (alfalfa)         | mm      |
 
