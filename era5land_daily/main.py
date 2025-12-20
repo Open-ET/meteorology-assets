@@ -59,14 +59,19 @@ else:
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
 if 'FUNCTION_REGION' in os.environ:
-    SCOPES = [
-        'https://www.googleapis.com/auth/cloud-platform',
-        'https://www.googleapis.com/auth/earthengine',
-    ]
-    credentials, project_id = google.auth.default(default_scopes=SCOPES)
-    ee.Initialize(credentials, project=project_id)
+    # Assume code is deployed to a cloud function
+    logging.debug(f'\nInitializing GEE using application default credentials')
+    import google.auth
+    credentials, project_id = google.auth.default(
+        default_scopes=['https://www.googleapis.com/auth/earthengine']
+        # 'https://www.googleapis.com/auth/cloud-platform'
+    )
+    ee.Initialize(
+        credentials, project=project_id, opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 else:
-    ee.Initialize(project='ee-cmorton')
+    # ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
+    ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
 
 
 def era5land_daily_export(

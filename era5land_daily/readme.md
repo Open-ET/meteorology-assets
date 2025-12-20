@@ -43,21 +43,13 @@ https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation#ERA5:datadoc
 
 ## Cloud Functions
 
-The asset ingest is currently being managed using Google Cloud Functions
+The asset ingest is currently being managed using Google Cloud Functions:
 
 https://console.cloud.google.com/functions/details/us-central1/era5land-meteorology-daily?project=openet
 
-The cloud function is called by the Cloud Scheduler
+The cloud function is called by the Cloud Scheduler:
 
 https://console.cloud.google.com/cloudscheduler?project=openet
-
-### Set the project ID
-
-Before deploying or calling the cloud functions, the "project" can be set once with the following call, or passed to each gcloud call.
-
-```
-gcloud config set project openet
-```
 
 ### Deploying the cloud function
 

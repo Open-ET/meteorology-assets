@@ -16,7 +16,7 @@ ASSET_DT_FMT = '%Y%m'
 # BUCKET_NAME = 'openet_assets'
 # BUCKET_FOLDER = 'meteorology/era5land'
 PROJECT_NAME = 'openet'
-REGIONS = ['global', 'na', 'sa']
+REGIONS = ['global', 'eu', 'na', 'sa', 'hawaii']
 SOURCE_FOLDER = 'projects/openet/assets/meteorology/era5land'
 SOURCE_TIMESTEP = 'daily'
 # SOURCE_COLL_ID = 'ECMWF/ERA5_LAND/HOURLY'
@@ -53,14 +53,19 @@ else:
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
 if 'FUNCTION_REGION' in os.environ:
+    # Assume code is deployed to a cloud function
     logging.debug(f'\nInitializing GEE using application default credentials')
     import google.auth
     credentials, project_id = google.auth.default(
         default_scopes=['https://www.googleapis.com/auth/earthengine']
+        # 'https://www.googleapis.com/auth/cloud-platform'
     )
-    ee.Initialize(credentials)
+    ee.Initialize(
+        credentials, project=project_id, opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 else:
-    ee.Initialize()
+    # ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
+    ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
 
 
 def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
@@ -132,6 +137,20 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
         # # Full global
         # width, height = 3600, 1801
         # transform = [0.1, 0, -180.05, 0, -0.1, 90.05]
+    elif region.lower() in ['eu']:
+        # European Union (not Europe) region
+        # Start hour offset should probably be -1,
+        #   but having an earlier start time might throw off the filterDate calls
+        #   and the difference between 0 and 1 is negligible
+        start_hour_offset = 0
+        crs = 'EPSG:4326'
+        width, height = 461, 326
+        transform = [0.1, 0, -11.05, 0, -0.1, 67.05]
+    elif region in ['hawaii']:
+        start_hour_offset = 10
+        crs = 'EPSG:4326'
+        width, height = 61, 41
+        transform = [0.1, 0, -160.55, 0, -0.1, 22.55]
     elif region in ['na']:
         # To include southern Greenland, include -33 east (1350 width?)
         start_hour_offset = 6

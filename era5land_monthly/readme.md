@@ -5,6 +5,8 @@ ERA5-Land monthly meteorology Earth Engine assets.
 ## Assets
 
 Collection ID: projects/openet/assets/meteorology/era5land/na/monthly
+Collection ID: projects/openet/assets/meteorology/era5land/sa/monthly
+Collection ID: projects/openet/assets/meteorology/era5land/eu/monthly
 Collection ID: projects/openet/assets/meteorology/era5land/monthly
 
 Timestep: monthly
@@ -25,19 +27,13 @@ https://confluence.ecmwf.int/display/CKB/ERA5%3A+data+documentation#ERA5:datadoc
 
 ## Cloud Functions
 
-The asset ingest is currently being managed using Google Cloud Functions
+The asset ingest is currently being managed using Google Cloud Functions:
 
 https://console.cloud.google.com/functions/details/us-central1/era5land-meteorology-monthly?project=openet
 
 The cloud function is called by the Cloud Scheduler:
+
 https://console.cloud.google.com/cloudscheduler?project=openet
-
-### Set the project ID
-
-Before deploying or calling the cloud functions, the "project" can be set once with the following call, or passed to each gcloud call.
-```
-gcloud config set project openet
-```
 
 ### Deploying the cloud function
 
