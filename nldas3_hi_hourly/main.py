@@ -135,6 +135,11 @@ def hourly_asset_ingest(
     # # transform = [0.01, 0, -169.0, 0, -0.01, 72.0]
 
     # Hawaii parameters
+    # width = 580
+    # height = 370
+    # x_offset = 860
+    # y1_offset = 4960                         # Offset from the top to the top
+    # y0_offset = 6500 - y1_offset - height    # Offset from the bottom to the bottom
     width = 600
     height = 400
     x_offset = 850
@@ -207,7 +212,7 @@ def hourly_asset_ingest(
                 latitude_array = src.read(1)
         except Exception as e:
             logging.exception(f'Unhandled exception: {e}')
-            return f'{tgt_date} - Elevation array could not be read'
+            return f'{tgt_date} - Latitude array could not be read'
         
         logging.debug('  Downloading longitude')
         if not os.path.isfile(longitude_path):
@@ -219,7 +224,7 @@ def hourly_asset_ingest(
                 longitude_array = src.read(1)
         except Exception as e:
             logging.exception(f'Unhandled exception: {e}')
-            return f'{tgt_date} - Elevation array could not be read'
+            return f'{tgt_date} - Longitude array could not be read'
 
         logging.debug('  Downloading land_mask')
         if not os.path.isfile(land_mask_path):
@@ -233,8 +238,9 @@ def hourly_asset_ingest(
             logging.exception(f'Unhandled exception: {e}')
             return f'{tgt_date} - Land mask array could not be read'
 
-    # Assume x offset is 0 for now
-    if x_offset or y0_offset:
+    elevation_array[elevation_array <= -9998] = 0
+
+    if x_offset or y1_offset:
         land_mask_array = land_mask_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
         elevation_array = elevation_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
         latitude_array = latitude_array[y1_offset: height + y1_offset, x_offset: width + x_offset]
@@ -302,14 +308,14 @@ def hourly_asset_ingest(
 
     # Iterate by hour then by variable
     for hour in hours:
-        logging.info(f'Hour: {hour}')
+        logging.info(f'  Hour: {hour}')
         hour_dt = tgt_dt.replace(hour=hour)
         upload_path = os.path.join(date_ws, f'{hour_dt.strftime(ASSET_DT_FMT)}.tif')
         bucket_path = f'gs://{BUCKET_NAME}/{BUCKET_FOLDER}/{hour_dt.strftime(ASSET_DT_FMT)}.tif'
-        bucket_json = bucket_path.replace('.tif', '_properties.json')
+        # bucket_json = bucket_path.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_COLL_ID}/{hour_dt.strftime(ASSET_DT_FMT)}'
         logging.debug(f'  {upload_path}')
-        logging.debug(f'  {bucket_path}')
+        # logging.debug(f'  {bucket_json}')
         logging.debug(f'  {asset_id}')
 
         # Double check if the asset already exists
@@ -335,14 +341,10 @@ def hourly_asset_ingest(
                     continue
 
                 # Read in the hourly data for the target variable and hour of day
-                # Select variable, hour of day, and clip to the target extent
                 try:
                     var_ds = (
                         src_ds[nc_var_names[variable]]
                         .isel(time=hour, lat=slice(y0_offset, y0_offset+height), lon=slice(x_offset, x_offset+width))
-                        # CGM - Slicing using the lat/lon is shifting the grid one cell to the right
-                        #   maybe because of rounding?
-                        # .isel(time=hour).sel(lat=slice(extent[1], extent[3]), lon=slice(extent[0], extent[2]))
                     )
                     nc_array = var_ds.to_numpy()
                 except Exception as e:
@@ -360,7 +362,6 @@ def hourly_asset_ingest(
                     # return f'{tgt_date} - {variable} array is all nodata'
 
                 hourly_arrays[variable] = np.flipud(nc_array[:, :])
-                # hourly_arrays[variable] = nc_array[:, :]
 
                 del nc_array
 
@@ -389,7 +390,7 @@ def hourly_asset_ingest(
 
             # Compute Reference ET
             if ('eto_asce' in variables) or ('etr_asce' in variables):
-                logging.info('  Computing Reference ET')
+                logging.debug('  Computing Reference ET')
 
                 # Compute wind speed from component vectors
                 wind_array = np.sqrt(hourly_arrays['wind_u'] ** 2 + hourly_arrays['wind_v'] ** 2)
@@ -448,7 +449,7 @@ def hourly_asset_ingest(
                 # return f'{tgt_date} - Missing input variables for composite\n'\
                 #        f'  {", ".join(list(set(variables) - input_vars))}'
 
-            logging.info('  Building output GeoTIFF')
+            logging.debug('  Building output GeoTIFF')
             output_ds = rasterio.open(
                 upload_path, 'w',
                 driver='COG',
@@ -465,7 +466,7 @@ def hourly_asset_ingest(
                 transform=transform,
             )
 
-            logging.info('  Writing arrays to composite image')
+            logging.debug('  Writing arrays to composite image')
             for band_i, variable in enumerate(variables):
                 output_ds.set_band_description(band_i + 1, variable)
                 data_array = hourly_arrays[variable].astype(np.float32)
@@ -490,7 +491,7 @@ def hourly_asset_ingest(
         if ('eto_asce' in variables) or ('etr_asce' in variables):
             properties['refet_version'] = importlib_metadata.version("refet")
 
-        logging.info('  Uploading geotiff to bucket')
+        logging.debug('  Uploading geotiff to bucket')
         bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
         blob = bucket.blob(
             bucket_path.replace(f'gs://{BUCKET_NAME}/', ''),
@@ -504,7 +505,7 @@ def hourly_asset_ingest(
             continue
             # return f'{tgt_date} - exception uploading file to bucket\n'
 
-        logging.info('  Ingesting into Earth Engine')
+        logging.debug('  Ingesting into Earth Engine')
         task_id = ee.data.newTaskId()[0]
         logging.debug(f'  {task_id}')
         params = {
@@ -570,8 +571,8 @@ def hourly_asset_ingest(
     # if ('FUNCTION_REGION' in os.environ) and os.path.isdir(date_ws):
     #     shutil.rmtree(date_ws)
 
-    # logging.info(f'  {tgt_date} - {asset_id}')
-    return f'{tgt_date} - {asset_id}\n'
+    # logging.info(f'  {tgt_date}')
+    return f'{tgt_date}\n'
 
 
 def hourly_asset_dates(start_dt, end_dt, hours=list(range(0, 24)), overwrite_flag=False):
