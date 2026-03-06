@@ -32,6 +32,46 @@ Spatial CIMIS data is also available on the UC Davis website (http://cimis.casil
 
 The asset ingest is currently being managed using Google Cloud Functions
 
+https://console.cloud.google.com/functions/details/us-central1/cimis-meteorology-daily?project=openet
+
+The cloud functions are called by the Cloud Scheduler:
+https://console.cloud.google.com/cloudscheduler?project=openet
+
+### Deploying the cloud function
+
+The following are the parameters that were set when deploying the function for the first time.  Subsequent deployments only need the project if not set above.
+
+```
+gcloud functions deploy cimis-meteorology-daily --project openet --no-gen2 --runtime python311 --region us-central1 --entry-point update --trigger-http --allow-unauthenticated --memory 512 --timeout 240 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --set-env-vars FUNCTION_REGION=us-central1
+```
+
+### Calling the cloud function
+
+The functions can be called by passing JSON data to the function.
+```
+gcloud functions call cimis-meteorology-daily --project openet --data '{"start":"2020-11-01","end":"2020-11-05"}'
+gcloud functions call cimis-meteorology-daily --project openet --data '{"days":"60"}'
+```
+
+If no arguments are passed to the scheduler it will check the last year for missing assets.
+```
+gcloud functions call cimis-meteorology-daily --project openet
+```
+
+### Scheduling the job
+
+```
+gcloud scheduler jobs update http cimis-meteorology-daily --schedule "10 12 * * *" --uri "https://us-central1-openet.cloudfunctions.net/cimis-meteorology-daily?days=60" --description "Spatial CIMIS Daily Metorology Assets" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
+```
+
+
+
+## Commands when function is split into scheduler and worker
+
+## Cloud Functions
+
+The asset ingest is currently being managed using Google Cloud Functions
+
 https://console.cloud.google.com/functions/details/us-central1/cimis-meteorology-daily-scheduler?project=openet
 https://console.cloud.google.com/functions/details/us-central1/cimis-meteorology-daily-worker?project=openet
 
@@ -42,13 +82,6 @@ The function calls are routed through a Cloud Task Queue:
 https://console.cloud.google.com/cloudtasks/queue/us-central1/ee-assets-slow/tasks?project=openet
 
 ### Deploying the cloud function
-
-Before deploying or calling the cloud functions, the "project" can be set once with the following call, or passed to each gcloud call.
-```
-gcloud config set project openet
-```
-
-The following are the parameters that were set when deploying the function for the first time.  Subsequent deployments only need the project if not set above.
 
 ```
 gcloud functions deploy cimis-meteorology-daily-scheduler --project openet --runtime python311 --region us-central1 --entry-point cron_scheduler --trigger-http --allow-unauthenticated --memory 512 --timeout 240 --service-account="openet-assets-queue@openet.iam.gserviceaccount.com" --max-instances 1 --set-env-vars FUNCTION_REGION=us-central1
@@ -73,7 +106,7 @@ gcloud functions call cimis-meteorology-daily-scheduler --project openet
 ### Scheduling the job
 
 ```
-gcloud scheduler jobs update http cimis-meteorology-daily --schedule "10 12 * * *" --uri "https://us-central1-openet.cloudfunctions.net/cimis-meteorology-daily-scheduler?days=60" --description "Spatial CIMIS Daily Metorology Assets" --http-method POST --time-zone "Etc/UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
+gcloud scheduler jobs update http cimis-meteorology-daily --schedule "10 12 * * *" --uri "https://us-central1-openet.cloudfunctions.net/cimis-meteorology-daily-scheduler?days=60" --description "Spatial CIMIS Daily Metorology Assets" --http-method POST --time-zone "UTC" --project openet --location us-central1 --max-retry-attempts 3 --attempt-deadline 300s --min-backoff=20s
 ```
 
 ### Create tasks queue

@@ -12,7 +12,6 @@ import time
 import ee
 from flask import abort, Response
 from google.cloud import storage
-from google.cloud import tasks_v2
 import numpy as np
 import rasterio
 import rasterio.warp
@@ -31,9 +30,6 @@ SOURCE_URL = 'https://spatialcimis.water.ca.gov/cimis'
 # This server stopped updating in 2019 but is useful for filling in missing dates
 #   specifically 2003-10-01 to 2003-12-31 and 2010-11-16 to 2010-11-23
 # SOURCE_URL = 'http://cimis.casil.ucdavis.edu/cimis'
-
-TASK_LOCATION = 'us-central1'
-TASK_QUEUE = 'ee-single-worker'
 START_DAY_OFFSET = 365
 END_DAY_OFFSET = 0
 TODAY_DT = datetime.now(timezone.utc)
@@ -67,7 +63,9 @@ if 'FUNCTION_REGION' in os.environ:
     credentials, project_id = google.auth.default(
         default_scopes=['https://www.googleapis.com/auth/earthengine']
     )
-    ee.Initialize(credentials)
+    ee.Initialize(
+        credentials, project=PROJECT_NAME, opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 else:
     ee.Initialize()
 
@@ -291,9 +289,7 @@ def cimis_daily_asset_ingest(tgt_dt, variables, workspace='/tmp', overwrite_flag
                 (int_xi, asset_width - output_shape[1] - int_xi)
             )
             logging.debug(f'    Pad: {pad_width}')
-            output_array = np.lib.pad(
-                output_array, pad_width, 'constant', constant_values=-9999.0
-            )
+            output_array = np.lib.pad(output_array, pad_width, 'constant', constant_values=-9999.0)
         elif output_geo != asset_geo:
             logging.warning(f'  Unexpected input {gz_var} array transform\n'
                             f'    Shape: {output_shape}\n'
@@ -499,14 +495,116 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
     return tgt_dt_list
 
 
+def update(request):
+    """Parse JSON/request arguments and queue ingest tasks for a date range"""
+    logging.info('Queuing CIMIS daily asset ingest tasks')
+    response = 'Queue CIMIS daily asset ingest tasks\n'
+    args = {}
+
+    request_json = request.get_json(silent=True)
+    request_args = request.args
+
+    if request_json and ('days' in request_json):
+        days = request_json['days']
+    elif request_args and ('days' in request_args):
+        days = request_args['days']
+    else:
+        days = START_DAY_OFFSET - END_DAY_OFFSET
+
+    try:
+        days = int(days)
+    except:
+        abort(400, description=f'Days parameter could not be parsed')
+
+    if request_json and ('start' in request_json):
+        start_date = request_json['start']
+    elif request_args and ('start' in request_args):
+        start_date = request_args['start']
+    else:
+        start_date = None
+        # abort(400, description='start parameter not set')
+
+    if request_json and ('end' in request_json):
+        end_date = request_json['end']
+    elif request_args and ('end' in request_args):
+        end_date = request_args['end']
+    else:
+        end_date = None
+        # abort(400, description='end parameter not set')
+
+    if (start_date is None) and (end_date is None):
+        start_date = (TODAY_DT - timedelta(days=days)).strftime('%Y-%m-%d')
+        end_date = (TODAY_DT - timedelta(days=END_DAY_OFFSET)).strftime('%Y-%m-%d')
+    elif (start_date is None) or (end_date is None):
+        abort(400, description='Both start and end date must be specified')
+
+    try:
+        args['start_dt'] = datetime.strptime(start_date, '%Y-%m-%d')
+    except:
+        abort(400, description=f'Start date {start_date} could not be parsed')
+    try:
+        args['end_dt'] = datetime.strptime(end_date, '%Y-%m-%d')
+        # args['end_dt'] = min(datetime.strptime(end_date, '%Y-%m-%d'), TODAY_DT)
+    except:
+        abort(400, description=f'End date {end_date} could not be parsed')
+
+    if args['end_dt'] < args['start_dt']:
+        abort(400, description='End date must be after start date')
+    if args['start_dt'] < datetime(2003, 10, 1):
+        abort(400, description=f'Start date cannot be before 2003-10-01')
+    if (args['end_dt'] - args['start_dt']).days > 366:
+        abort(400, description=f'Date range must be less than 365 days')
+
+    # CGM - For now don't allow scheduler calls to overwrite existing assets
+    # if request_json and 'overwrite' in request_json:
+    #     overwrite_flag = request_json['overwrite']
+    # elif request_args and 'overwrite' in request_args:
+    #     overwrite_flag = request_args['overwrite']
+    # else:
+    #     overwrite_flag = 'false'
+    #
+    # if overwrite_flag.lower() in ['true', 't']:
+    #     args['overwrite_flag'] = True
+    # elif overwrite_flag.lower() in ['false', 'f']:
+    #     args['overwrite_flag'] = False
+    # else:
+    #     abort(400, description=f'overwrite="{overwrite_flag}" could not be parsed')
+
+    # CGM - Should the scheduler be responsible for clearing the bucket?
+    logging.info('Clearing all files from bucket folder')
+    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
+    blobs = bucket.list_blobs(prefix=BUCKET_FOLDER)
+    for blob in blobs:
+        blob.delete()
+
+    for tgt_dt in cimis_daily_asset_dates(**args):
+        # logging.info(f'Date: {tgt_dt.strftime("%Y-%m-%d")}')
+        # response += 'Date: {}\n'.format(tgt_dt.strftime('%Y-%m-%d'))
+        response += cimis_daily_asset_ingest(
+            tgt_dt, workspace='/tmp', variables=VARIABLES, overwrite_flag=False
+        )
+
+    return Response(response, mimetype='text/plain')
+
+
 # def cron_scheduler(request):
 #     """Parse JSON/request arguments and queue ingest tasks for a date range"""
-#     logging.info('Queuing CIMIS daily asset ingest tasks')
-#     response = 'Queue CIMIS daily asset ingest tasks\n'
 #     args = {}
 #
 #     request_json = request.get_json(silent=True)
 #     request_args = request.args
+#
+#     if request_json and 'days' in request_json:
+#         days = request_json['days']
+#     elif request_args and 'days' in request_args:
+#         days = request_args['days']
+#     else:
+#         days = START_DAY_OFFSET - END_DAY_OFFSET
+#
+#     try:
+#         days = int(days)
+#     except:
+#         abort(400, description=f'Days parameter could not be parsed')
 #
 #     if request_json and 'start' in request_json:
 #         start_date = request_json['start']
@@ -514,7 +612,6 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #         start_date = request_args['start']
 #     else:
 #         start_date = None
-#         # abort(400, description='start parameter not set')
 #
 #     if request_json and 'end' in request_json:
 #         end_date = request_json['end']
@@ -522,11 +619,10 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #         end_date = request_args['end']
 #     else:
 #         end_date = None
-#         # abort(400, description='end parameter not set')
 #
 #     if start_date is None and end_date is None:
-#         start_date = (TODAY_DT - relativedelta(days=START_DAY_OFFSET)).strftime('%Y-%m-%d')
-#         end_date = (TODAY_DT - relativedelta(days=END_DAY_OFFSET)).strftime('%Y-%m-%d')
+#         start_date = (TODAY_DT - timedelta(days=days)).strftime('%Y-%m-%d')
+#         end_date = (TODAY_DT - timedelta(days=END_DAY_OFFSET)).strftime('%Y-%m-%d')
 #     elif start_date is None or end_date is None:
 #         abort(400, description='Both start and end date must be specified')
 #
@@ -536,10 +632,6 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #         abort(400, description=f'Start date {start_date} could not be parsed')
 #     try:
 #         args['end_dt'] = datetime.strptime(end_date, '%Y-%m-%d')
-#         # args['end_dt'] = min(
-#         #     datetime.strptime(end_date, '%Y-%m-%d'),
-#         #     TODAY_DT
-#         # )
 #     except:
 #         abort(400, description=f'End date {end_date} could not be parsed')
 #
@@ -547,10 +639,12 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #         abort(400, description='End date must be after start date')
 #     if args['start_dt'] < datetime(2003, 10, 1):
 #         abort(400, description=f'Start date cannot be before 2003-10-01')
-#     # if end_dt > TODAY_DT:
-#     #     end_dt = TODAY_DT
+#     # if args['start_dt'] < datetime(2004, 1, 1):
+#     #     abort(400, description=f'Start date cannot be before 2004-01-01')
+#     # if args['end_dt'] > TODAY_DT:
+#     #     args['end_dt'] = TODAY_DT
 #     #     logging.info(f'Adjusting end date to:   {end_dt.strftime("%Y-%m-%d")}\n')
-#     # if (end_dt - start_dt).days > 40:
+#     # if (args['end_dt'] - args['start_dt']).days > 40:
 #     #     abort(400, description=f'Date range must be less than 30 days')
 #
 #     # CGM - For now don't allow scheduler calls to overwrite existing assets
@@ -566,7 +660,7 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #     # elif overwrite_flag.lower() in ['false', 'f']:
 #     #     args['overwrite_flag'] = False
 #     # else:
-#     #     abort(400, description=f'overwrite="{overwrite_flag}" could not be parsed')
+#     #     abort(400, description=f'overwrite "{overwrite_flag}" could not be parsed')
 #
 #     # CGM - Should the scheduler be responsible for clearing the bucket?
 #     logging.info('Clearing all files from bucket folder')
@@ -575,185 +669,94 @@ def cimis_daily_asset_dates(start_dt, end_dt, overwrite_flag=False):
 #     for blob in blobs:
 #         blob.delete()
 #
-#     for tgt_dt in cimis_daily_asset_dates(**args):
-#         # logging.info(f'Date: {tgt_dt.strftime("%Y-%m-%d")}')
-#         # response += 'Date: {}\n'.format(tgt_dt.strftime('%Y-%m-%d'))
-#         response += cimis_daily_asset_ingest(
-#             tgt_dt, workspace='/tmp', variables=VARIABLES, overwrite_flag=False)
+#     response = queue_ingest_tasks(cimis_daily_asset_dates(**args))
+#     return Response(response, mimetype='text/plain')
+#
+#
+# def cron_worker(request):
+#     """Parse JSON/request arguments and start ingest for a single date export"""
+#     args = {
+#         'variables': VARIABLES,
+#         'workspace': '/tmp',
+#     }
+#
+#     request_json = request.get_json(silent=True)
+#     request_args = request.args
+#
+#     if request_json and ('date' in request_json):
+#         tgt_date = request_json['date']
+#     elif request_args and ('date' in request_args):
+#         tgt_date = request_args['date']
+#     else:
+#         abort(400, description='date parameter not set')
+#
+#     try:
+#         args['tgt_dt'] = datetime.strptime(tgt_date, '%Y-%m-%d')
+#     except:
+#         abort(400, description=f'date "{tgt_date}" could not be parsed')
+#
+#     if request_json and ('overwrite' in request_json):
+#         overwrite_flag = request_json['overwrite']
+#     elif request_args and ('overwrite' in request_args):
+#         overwrite_flag = request_args['overwrite']
+#     else:
+#         overwrite_flag = 'false'
+#
+#     if overwrite_flag.lower() in ['true', 't']:
+#         args['overwrite_flag'] = True
+#     elif overwrite_flag.lower() in ['false', 'f']:
+#         args['overwrite_flag'] = False
+#     else:
+#         abort(400, description=f'overwrite="{overwrite_flag}" could not be parsed')
+#
+#     response = cimis_daily_asset_ingest(**args)
 #
 #     return Response(response, mimetype='text/plain')
-
-
-def cron_scheduler(request):
-    """Parse JSON/request arguments and queue ingest tasks for a date range"""
-    args = {}
-
-    request_json = request.get_json(silent=True)
-    request_args = request.args
-
-    if request_json and 'days' in request_json:
-        days = request_json['days']
-    elif request_args and 'days' in request_args:
-        days = request_args['days']
-    else:
-        days = START_DAY_OFFSET - END_DAY_OFFSET
-
-    try:
-        days = int(days)
-    except:
-        abort(400, description=f'Days parameter could not be parsed')
-
-    if request_json and 'start' in request_json:
-        start_date = request_json['start']
-    elif request_args and 'start' in request_args:
-        start_date = request_args['start']
-    else:
-        start_date = None
-
-    if request_json and 'end' in request_json:
-        end_date = request_json['end']
-    elif request_args and 'end' in request_args:
-        end_date = request_args['end']
-    else:
-        end_date = None
-
-    if start_date is None and end_date is None:
-        start_date = (TODAY_DT - timedelta(days=days)).strftime('%Y-%m-%d')
-        end_date = (TODAY_DT - timedelta(days=END_DAY_OFFSET)).strftime('%Y-%m-%d')
-    elif start_date is None or end_date is None:
-        abort(400, description='Both start and end date must be specified')
-
-    try:
-        args['start_dt'] = datetime.strptime(start_date, '%Y-%m-%d')
-    except:
-        abort(400, description=f'Start date {start_date} could not be parsed')
-    try:
-        args['end_dt'] = datetime.strptime(end_date, '%Y-%m-%d')
-    except:
-        abort(400, description=f'End date {end_date} could not be parsed')
-
-    if args['end_dt'] < args['start_dt']:
-        abort(400, description='End date must be after start date')
-    if args['start_dt'] < datetime(2003, 10, 1):
-        abort(400, description=f'Start date cannot be before 2003-10-01')
-    # if args['start_dt'] < datetime(2004, 1, 1):
-    #     abort(400, description=f'Start date cannot be before 2004-01-01')
-    # if args['end_dt'] > TODAY_DT:
-    #     args['end_dt'] = TODAY_DT
-    #     logging.info(f'Adjusting end date to:   {end_dt.strftime("%Y-%m-%d")}\n')
-    # if (args['end_dt'] - args['start_dt']).days > 40:
-    #     abort(400, description=f'Date range must be less than 30 days')
-
-    # CGM - For now don't allow scheduler calls to overwrite existing assets
-    # if request_json and 'overwrite' in request_json:
-    #     overwrite_flag = request_json['overwrite']
-    # elif request_args and 'overwrite' in request_args:
-    #     overwrite_flag = request_args['overwrite']
-    # else:
-    #     overwrite_flag = 'false'
-    #
-    # if overwrite_flag.lower() in ['true', 't']:
-    #     args['overwrite_flag'] = True
-    # elif overwrite_flag.lower() in ['false', 'f']:
-    #     args['overwrite_flag'] = False
-    # else:
-    #     abort(400, description=f'overwrite "{overwrite_flag}" could not be parsed')
-
-    # CGM - Should the scheduler be responsible for clearing the bucket?
-    logging.info('Clearing all files from bucket folder')
-    bucket = STORAGE_CLIENT.bucket(BUCKET_NAME)
-    blobs = bucket.list_blobs(prefix=BUCKET_FOLDER)
-    for blob in blobs:
-        blob.delete()
-
-    response = queue_ingest_tasks(cimis_daily_asset_dates(**args))
-    return Response(response, mimetype='text/plain')
-
-
-def cron_worker(request):
-    """Parse JSON/request arguments and start ingest for a single date export"""
-    args = {
-        'variables': VARIABLES,
-        'workspace': '/tmp',
-    }
-
-    request_json = request.get_json(silent=True)
-    request_args = request.args
-
-    if request_json and ('date' in request_json):
-        tgt_date = request_json['date']
-    elif request_args and ('date' in request_args):
-        tgt_date = request_args['date']
-    else:
-        abort(400, description='date parameter not set')
-
-    try:
-        args['tgt_dt'] = datetime.strptime(tgt_date, '%Y-%m-%d')
-    except:
-        abort(400, description=f'date "{tgt_date}" could not be parsed')
-
-    if request_json and ('overwrite' in request_json):
-        overwrite_flag = request_json['overwrite']
-    elif request_args and ('overwrite' in request_args):
-        overwrite_flag = request_args['overwrite']
-    else:
-        overwrite_flag = 'false'
-
-    if overwrite_flag.lower() in ['true', 't']:
-        args['overwrite_flag'] = True
-    elif overwrite_flag.lower() in ['false', 'f']:
-        args['overwrite_flag'] = False
-    else:
-        abort(400, description=f'overwrite="{overwrite_flag}" could not be parsed')
-
-    response = cimis_daily_asset_ingest(**args)
-
-    return Response(response, mimetype='text/plain')
-
-
-def queue_ingest_tasks(tgt_dt_list):
-    """Submit ingest tasks to the queue
-
-    Parameters
-    ----------
-    tgt_dt_list : list
-
-    Returns
-    -------
-    str : response string
-
-    """
-    logging.info('Queuing CIMIS daily asset ingest tasks')
-    response = 'Queue CIMIS daily asset ingest tasks\n'
-
-    TASK_CLIENT = tasks_v2.CloudTasksClient()
-    parent = TASK_CLIENT.queue_path(PROJECT_NAME, TASK_LOCATION, TASK_QUEUE)
-
-    for tgt_dt in tgt_dt_list:
-        logging.info(f'Date: {tgt_dt.strftime("%Y-%m-%d")}')
-        # response += f'Date: {tgt_dt.strftime("%Y-%m-%d")}\n'
-
-        # Using the default name in the request can create duplicate tasks
-        # Trying out adding the timestamp to avoid this for testing/debug
-        name = f'{parent}/tasks/cimis_daily_v1_asset_{tgt_dt.strftime("%Y%m%d")}_' \
-               f'{TODAY_DT.strftime("%Y%m%d%H%M%S")}'
-        response += name + '\n'
-        logging.info(name)
-
-        # Using the json body wasn't working, switching back to URL
-        # Couldn't get authentication with oidc_token to work
-        task = {
-            'http_request': {
-                'http_method': tasks_v2.HttpMethod.POST,
-                'url': f'{FUNCTION_URL}/{FUNCTION_NAME}?date={tgt_dt.strftime("%Y-%m-%d")}',
-            },
-            'name': name,
-        }
-        TASK_CLIENT.create_task(request={'parent': parent, 'task': task})
-
-        time.sleep(0.1)
-
-    return response
+#
+#
+# def queue_ingest_tasks(tgt_dt_list):
+#     """Submit ingest tasks to the queue
+#
+#     Parameters
+#     ----------
+#     tgt_dt_list : list
+#
+#     Returns
+#     -------
+#     str : response string
+#
+#     """
+#     logging.info('Queuing CIMIS daily asset ingest tasks')
+#     response = 'Queue CIMIS daily asset ingest tasks\n'
+#
+#     TASK_CLIENT = tasks_v2.CloudTasksClient()
+#     parent = TASK_CLIENT.queue_path(PROJECT_NAME, TASK_LOCATION, TASK_QUEUE)
+#
+#     for tgt_dt in tgt_dt_list:
+#         logging.info(f'Date: {tgt_dt.strftime("%Y-%m-%d")}')
+#         # response += f'Date: {tgt_dt.strftime("%Y-%m-%d")}\n'
+#
+#         # Using the default name in the request can create duplicate tasks
+#         # Trying out adding the timestamp to avoid this for testing/debug
+#         name = f'{parent}/tasks/cimis_daily_v1_asset_{tgt_dt.strftime("%Y%m%d")}_' \
+#                f'{TODAY_DT.strftime("%Y%m%d%H%M%S")}'
+#         response += name + '\n'
+#         logging.info(name)
+#
+#         # Using the json body wasn't working, switching back to URL
+#         # Couldn't get authentication with oidc_token to work
+#         task = {
+#             'http_request': {
+#                 'http_method': tasks_v2.HttpMethod.POST,
+#                 'url': f'{FUNCTION_URL}/{FUNCTION_NAME}?date={tgt_dt.strftime("%Y-%m-%d")}',
+#             },
+#             'name': name,
+#         }
+#         TASK_CLIENT.create_task(request={'parent': parent, 'task': task})
+#
+#         time.sleep(0.1)
+#
+#     return response
 
 
 def array_geo_offsets(full_geo, sub_geo, cs):
