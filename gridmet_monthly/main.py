@@ -9,12 +9,13 @@ import ee
 from flask import abort, Response
 
 ASSET_COLL_ID = 'projects/openet/assets/meteorology/gridmet/monthly'
-SOURCE_COLL_ID = 'IDAHO_EPSCOR/GRIDMET'
 ASSET_DT_FMT = '%Y%m'
+PROJECT_NAME = 'openet'
+SOURCE_COLL_ID = 'IDAHO_EPSCOR/GRIDMET'
 START_MONTH_OFFSET = 3
 END_MONTH_OFFSET = 0
-VARIABLES = ['eto', 'etr', 'pr']
 TODAY_DT = datetime.now(timezone.utc)
+VARIABLES = ['eto', 'etr', 'pr']
 
 if 'FUNCTION_REGION' in os.environ:
     # Logging is not working correctly in cloud functions for Python 3.8+
@@ -41,7 +42,9 @@ if 'FUNCTION_REGION' in os.environ:
     credentials, project_id = google.auth.default(
         default_scopes=['https://www.googleapis.com/auth/earthengine']
     )
-    ee.Initialize(credentials)
+    ee.Initialize(
+        credentials, project=PROJECT_NAME, opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 else:
     ee.Initialize()
 
@@ -326,7 +329,7 @@ def month_range(start_dt, end_dt):
         curr_dt += relativedelta(months=1)
 
 
-def cron_scheduler(request):
+def update(request):
     """Responds to any HTTP request.
 
     Parameters
@@ -346,21 +349,21 @@ def cron_scheduler(request):
     request_args = request.args
 
     # Default start and end date to None if not set
-    if request_json and 'start' in request_json:
+    if request_json and ('start' in request_json):
         start_date = request_json['start']
-    elif request_args and 'start' in request_args:
+    elif request_args and ('start' in request_args):
         start_date = request_args['start']
     else:
         start_date = None
 
-    if request_json and 'end' in request_json:
+    if request_json and ('end' in request_json):
         end_date = request_json['end']
-    elif request_args and 'end' in request_args:
+    elif request_args and ('end' in request_args):
         end_date = request_args['end']
     else:
         end_date = None
 
-    if not start_date and not end_date:
+    if (not start_date) and (not end_date):
         start_dt = (datetime(TODAY_DT.year, TODAY_DT.month, 1) -
                     relativedelta(months=START_MONTH_OFFSET))
         end_dt = (datetime(TODAY_DT.year, TODAY_DT.month, 1) - relativedelta(days=1) -
@@ -395,17 +398,12 @@ def cron_scheduler(request):
     response += f'Start Date: {start_dt.strftime("%Y-%m-%d")}\n'
     response += f'End Date:   {end_dt.strftime("%Y-%m-%d")}\n'
 
-    args = {
-        'start_dt': start_dt,
-        'end_dt': end_dt,
-    }
+    args = {'start_dt': start_dt, 'end_dt': end_dt}
 
     for tgt_dt in gridmet_monthly_asset_dates(**args):
         logging.info(f'Date: {tgt_dt.strftime("%Y-%m-%d")}')
         # response += f'Date: {tgt_dt.strftime("%Y-%m-%d")}\n'
-        response += gridmet_monthly_asset_export(
-            tgt_dt, variables=VARIABLES, overwrite_flag=True
-        )
+        response += gridmet_monthly_asset_export(tgt_dt, variables=VARIABLES, overwrite_flag=True)
 
     return Response(response, mimetype='text/plain')
 
