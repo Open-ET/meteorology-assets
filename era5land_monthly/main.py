@@ -65,7 +65,11 @@ if 'FUNCTION_REGION' in os.environ:
     )
 else:
     # ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
-    ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
+    # ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
+    ee.Initialize(
+        ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'),
+        opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 
 
 def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
@@ -101,11 +105,11 @@ def era5land_monthly_asset_export(tgt_dt, region=None, overwrite_flag=False):
         # bucket_img = f'{BUCKET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
         # bucket_json = bucket_img.replace('.tif', '_properties.json')
         asset_id = f'{ASSET_FOLDER}/{region}/{TIMESTEP}/{tgt_dt.strftime(ASSET_DT_FMT)}'
-    logging.info(f'  source_id:   {source_coll_id}')
-    logging.info(f'  export_id:   {export_name}')
-    # logging.info(f'  bucket_img:  {bucket_img}')
-    # logging.info(f'  bucket_json: {bucket_json}')
-    logging.info(f'  asset_id:    {asset_id}')
+    logging.debug(f'  source_id:   {source_coll_id}')
+    logging.debug(f'  export_id:   {export_name}')
+    # logging.debug(f'  bucket_img:  {bucket_img}')
+    # logging.debug(f'  bucket_json: {bucket_json}')
+    logging.debug(f'  asset_id:    {asset_id}')
 
     start_date = tgt_dt.strftime('%Y-%m-%d')
     end_date = (tgt_dt + relativedelta(months=1)).strftime('%Y-%m-%d')

@@ -71,7 +71,11 @@ if 'FUNCTION_REGION' in os.environ:
     )
 else:
     # ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
-    ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
+    # ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
+    ee.Initialize(
+        ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'),
+        opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 
 
 def era5land_daily_export(
@@ -252,6 +256,7 @@ def era5land_daily_export(
     properties = {
         'build_date': datetime.today().strftime('%Y-%m-%d'),
         'date': tgt_dt.strftime('%Y-%m-%d'),
+        'fill_edge_cells': fill_edge_cells,
         'geerefet_version': metadata.version('openet-refet-gee'),
         'reference_et_timestep': refet_timestep.lower(),
         'start_hour_offset': start_hour_offset,
