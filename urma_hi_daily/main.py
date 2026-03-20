@@ -67,8 +67,7 @@ if 'FUNCTION_REGION' in os.environ:
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
     ee.Initialize(credentials, project=project_id)
 else:
-    ee.Initialize(ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'))
-    # ee.Initialize(project='ee-cmorton')
+    ee.Initialize()
 
 
 def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=False):

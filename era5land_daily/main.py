@@ -70,12 +70,7 @@ if 'FUNCTION_REGION' in os.environ:
         credentials, project=project_id, opt_url='https://earthengine-highvolume.googleapis.com'
     )
 else:
-    # ee.Initialize(opt_url='https://earthengine-highvolume.googleapis.com')
-    # ee.Initialize(project='ee-cmorton', opt_url='https://earthengine-highvolume.googleapis.com')
-    ee.Initialize(
-        ee.ServiceAccountCredentials('_', key_file='../../keys/openet-gee.json'),
-        opt_url='https://earthengine-highvolume.googleapis.com'
-    )
+    ee.Initialize(project=PROJECT_NAME, opt_url='https://earthengine-highvolume.googleapis.com')
 
 
 def era5land_daily_export(
