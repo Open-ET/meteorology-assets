@@ -32,8 +32,16 @@ VARIABLES = [
     'WIND',
     'TCDC',
     'SRAD_TCDC',
-    'ETO',
-    'ETR',
+    'SRAD_GOES',
+    'SRAD_ERA5LAND',
+    'ETO_TCDC',
+    'ETR_TCDC',
+    'ETO_GOES',
+    'ETR_GOES',
+    'ETO_ERA5LAND',
+    'ETR_ERA5LAND',
+    # 'ETO',
+    # 'ETR',
     # # CGM - Remove these bands at some point
     # 'UGRD',
     # 'VGRD',
@@ -59,7 +67,8 @@ else:
     import logging
     # logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
-    logging.getLogger('googleapiclient').setLevel(logging.INFO)
+    logging.getLogger('googleapiclient').setLevel(logging.ERROR)
+    logging.getLogger('rasterio').setLevel(logging.INFO)
     logging.getLogger('requests').setLevel(logging.INFO)
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
@@ -70,16 +79,19 @@ if 'FUNCTION_REGION' in os.environ:
     ]
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
     ee.Initialize(credentials, project=project_id)
-else:
-    ee.Initialize()
+# else:
+#     ee.Initialize()
 
 
 def urma_hawaii_hourly_ingest(
         tgt_dt,
         workspace='/tmp',
+        era5land_workspace=None,
+        goes_workspace=None,
         overwrite_flag=False,
+        cleanup_flag=False,
 ):
-    """Ingest hourly URMA Hawaii image for a single date
+    """Ingest hourly URMA Hawaii image for a single hourly timestep
 
     Parameters
     ----------
@@ -241,12 +253,39 @@ def urma_hawaii_hourly_ingest(
     nn = -0.0083 * hourly_arrays['TCDC'] + 0.9659
     hourly_arrays['SRAD_TCDC'] = ra * (0.25 + nn * 0.5)
 
-    # Compute reference ET
+    # Read GOES DSR if available
+    goes_srad_path = os.path.join(
+        goes_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'), tif_name
+    )
+    if goes_workspace and os.path.isfile(goes_srad_path):
+        with rasterio.open(goes_srad_path) as src:
+            hourly_arrays['SRAD_GOES'] = src.read(1).astype(np.float32)
+            hourly_arrays['SRAD_GOES'][land_mask_array == 0] = np.nan
+    else:
+        hourly_arrays['SRAD_GOES'] = np.full(land_mask_array.shape, np.nan)
+
+    # Read ERA5-Land DSR if available
+    era5land_srad_path = os.path.join(
+        era5land_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'), tif_name
+    )
+    if era5land_workspace and os.path.isfile(era5land_srad_path):
+        with rasterio.open(era5land_srad_path) as src:
+            hourly_arrays['SRAD_ERA5LAND'] = src.read(1).astype(np.float32)
+            hourly_arrays['SRAD_ERA5LAND'][land_mask_array == 0] = np.nan
+    else:
+        hourly_arrays['SRAD_ERA5LAND'] = np.full(land_mask_array.shape, np.nan)
+
+    # # Initialize Rs with GOES if available, but fallback to using cloud cover elsewhere
+    # rs = np.copy(hourly_arrays['SRAD_GOES'])
+    # rs_mask = np.isnan(rs)
+    # rs[rs_mask] = hourly_arrays['SRAD_TCDC'][rs_mask]
+
+    # Compute reference ET using the cloud cover derived solar
     # TODO: Check if this should use "refet" method
     #   so that Rso calculation considers vapor pressure
     refet_obj = refet.Hourly(
         tmean=hourly_arrays['TMP'],
-        tdew=hourly_arrays['DPT'] ,
+        tdew=hourly_arrays['DPT'],
         rs=hourly_arrays['SRAD_TCDC'],
         uz=hourly_arrays['WIND'],
         zw=10,
@@ -258,8 +297,58 @@ def urma_hawaii_hourly_ingest(
         method='asce',
         input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1', 'lat': 'deg'},
     )
-    hourly_arrays['ETO'] = refet_obj.eto()
-    hourly_arrays['ETR'] = refet_obj.etr()
+    hourly_arrays['ETO_TCDC'] = refet_obj.eto()
+    hourly_arrays['ETR_TCDC'] = refet_obj.etr()
+
+    # Compute reference ET using GOES solar
+    # TODO: Check if this should use "refet" method
+    #   so that Rso calculation considers vapor pressure
+    refet_obj = refet.Hourly(
+        tmean=hourly_arrays['TMP'],
+        tdew=hourly_arrays['DPT'],
+        rs=hourly_arrays['SRAD_GOES'],
+        uz=hourly_arrays['WIND'],
+        zw=10,
+        elev=elevation_array,
+        lat=latitude_array,
+        lon=longitude_array,
+        doy=tgt_doy,
+        time=float(tgt_dt.strftime('%H')),
+        method='asce',
+        input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1', 'lat': 'deg'},
+    )
+    hourly_arrays['ETO_GOES'] = refet_obj.eto()
+    hourly_arrays['ETR_GOES'] = refet_obj.etr()
+
+    # Compute reference ET using ERA5-Land
+    # TODO: Check if this should use "refet" method
+    #   so that Rso calculation considers vapor pressure
+    refet_obj = refet.Hourly(
+        tmean=hourly_arrays['TMP'],
+        tdew=hourly_arrays['DPT'],
+        rs=hourly_arrays['SRAD_ERA5LAND'],
+        uz=hourly_arrays['WIND'],
+        zw=10,
+        elev=elevation_array,
+        lat=latitude_array,
+        lon=longitude_array,
+        doy=tgt_doy,
+        time=float(tgt_dt.strftime('%H')),
+        method='asce',
+        input_units={'tmean': 'C', 'tdew': 'C', 'rs': 'w m-2', 'uz': 'm s-1', 'lat': 'deg'},
+    )
+    hourly_arrays['ETO_ERA5LAND'] = refet_obj.eto()
+    hourly_arrays['ETR_ERA5LAND'] = refet_obj.etr()
+
+    var_units['SRAD_TCDC'] = 'W/m2'
+    var_units['SRAD_GOES'] = 'W/m2'
+    var_units['SRAD_ERA5LAND'] = 'W/m2'
+    var_units['ETO_TCDC'] = 'mm'
+    var_units['ETO_GOES'] = 'mm'
+    var_units['ETO_ERA5LAND'] = 'mm'
+    var_units['ETR_TCDC'] = 'mm'
+    var_units['ETR_GOES'] = 'mm'
+    var_units['ETR_ERA5LAND'] = 'mm'
 
     # Only build the composite if all the input images are available
     input_vars = set(hourly_arrays.keys())
@@ -269,10 +358,20 @@ def urma_hawaii_hourly_ingest(
 
     # logging.debug('\nBuilding output GeoTIFF')
     output_ds = rasterio.open(
-        local_path, 'w', driver='GTiff',
-        nodata=-9999, count=len(VARIABLES), dtype=rasterio.float64,
-        height=height, width=width, crs=crs, transform=gee_transform,
-        compress='lzw', tiled=True, blockxsize=512, blockysize=512,
+        local_path,
+        'w',
+        driver='GTiff',
+        nodata=-9999,
+        count=len(VARIABLES),
+        dtype=rasterio.float64,
+        height=height,
+        width=width,
+        crs=crs,
+        transform=gee_transform,
+        compress='deflate',
+        tiled=True,
+        blockxsize=512,
+        blockysize=512,
     )
 
     # logging.debug('\nWriting arrays to output GeoTIFF')
@@ -327,12 +426,15 @@ def urma_hawaii_hourly_ingest(
     ee.data.startIngestion(task_id, params, allow_overwrite=True)
 
     # Always remove local TIF
-    os.remove(local_path)
+    if cleanup_flag:
+        os.remove(local_path)
 
     # Only remove GRIB file when run from a cloud function
     if 'FUNCTION_REGION' in os.environ:
         os.remove(grb_path)
 
+    # logging.info(f'  {export_name} - {task.id}')
+    # logging.info(f'  {tgt_date} - {asset_id}')
     return f'{tgt_date} - {asset_id}\n'
 
 
@@ -383,7 +485,7 @@ def url_download(download_url, output_path, verify=True):
 
 
 def date_range(start_dt, end_dt, days=1, skip_leap_days=False):
-    """Generate dates within a range (inclusive)
+    """Generate dates within a range (exclusive)
 
     Parameters
     ----------
@@ -446,14 +548,22 @@ def arg_parse():
         '--workspace', metavar='PATH',
         default=os.path.dirname(os.path.abspath(__file__)),
         help='Set the current working directory')
-    # parser.add_argument(
-    #     '--project', type=str, required=True, help='Earth Engine Project ID')
+    parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
     parser.add_argument(
         '--start', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='Start date')
     parser.add_argument(
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='End date (exclusive)')
+    parser.add_argument(
+        '--era5land', metavar='PATH',
+        default=os.path.dirname(os.path.abspath(__file__)),
+        help='Set the path to the Hawaii ERA5-Land solar data')
+    parser.add_argument(
+        '--goes', metavar='PATH',
+        default=os.path.dirname(os.path.abspath(__file__)),
+        help='Set the path to the Hawaii GOES DSR data')
     parser.add_argument(
         '--delay', default=1, type=float,
         help='Delay (in seconds) between each export tasks')
@@ -468,12 +578,36 @@ def arg_parse():
         help='Debug level logging', action='store_const', dest='loglevel')
     args = parser.parse_args()
 
+    # Convert relative paths to absolute paths
+    if args.workspace and os.path.isdir(os.path.abspath(args.workspace)):
+        args.workspace = os.path.abspath(args.workspace)
+    if args.era5land and os.path.isdir(os.path.abspath(args.era5land)):
+        args.era5land = os.path.abspath(args.era5land)
+    if args.goes and os.path.isdir(os.path.abspath(args.goes)):
+        args.goes = os.path.abspath(args.goes)
+
     return args
 
 
 if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
+
+    logging.info('\nInitializing Earth Engine using project ID')
+    ee.Initialize(project=args.project)
+
+    # # Build the image collection if it doesn't exist
+    # logging.debug(f'\nImage Collection: {ASSET_COLL_ID}')
+    # if not ee.data.getInfo(ASSET_COLL_ID.rsplit('/', 1)[0]):
+    #     logging.info(f'\nImage collection folder does not exist and will be built'
+    #                  f'\n  {ASSET_COLL_ID.rsplit("/", 1)[0]}')
+    #     input('Press ENTER to continue')
+    #     ee.data.createAsset({'type': 'FOLDER'}, ASSET_COLL_ID.rsplit('/', 1)[0])
+    # if not ee.data.getInfo(ASSET_COLL_ID):
+    #     logging.info(f'\nImage collection does not exist and will be built'
+    #                  f'\n  {ASSET_COLL_ID}')
+    #     input('Press ENTER to continue')
+    #     ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
 
     for tgt_dt in sorted(date_range(args.start, args.end), reverse=args.reverse):
         print(tgt_dt)
@@ -482,6 +616,8 @@ if __name__ == '__main__':
                 tgt_dt=tgt_dt + timedelta(hours=hour),
                 workspace=args.workspace,
                 overwrite_flag=args.overwrite,
+                era5land_workspace=args.era5land,
+                goes_workspace=args.goes,
             )
             logging.info(f'  {response}')
 

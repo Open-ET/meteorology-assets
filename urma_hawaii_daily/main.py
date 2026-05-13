@@ -29,8 +29,16 @@ VARIABLES = [
     'WIND',
     'TCDC',
     'SRAD_TCDC',
-    'ETO',
-    'ETR',
+    'SRAD_ERA5LAND',
+    'SRAD_GOES',
+    'ETO_TCDC',
+    'ETR_TCDC',
+    'ETO_ERA5LAND',
+    'ETR_ERA5LAND',
+    'ETO_GOES',
+    'ETR_GOES',
+    # 'ETO',
+    # 'ETR',
     # 'UGRD',
     # 'VGRD',
     # 'HGT',
@@ -55,7 +63,7 @@ else:
     import logging
     # logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
-    logging.getLogger('googleapiclient').setLevel(logging.INFO)
+    logging.getLogger('googleapiclient').setLevel(logging.ERROR)
     logging.getLogger('requests').setLevel(logging.INFO)
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
@@ -66,8 +74,6 @@ if 'FUNCTION_REGION' in os.environ:
     ]
     credentials, project_id = google.auth.default(default_scopes=SCOPES)
     ee.Initialize(credentials, project=project_id)
-else:
-    ee.Initialize()
 
 
 def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=False):
@@ -190,8 +196,12 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
         return f'{export_name} - Less than 24 hours data for date, skipping\n'
 
     if refet_timestep.lower() in ['hour', 'hourly']:
-        eto = src_coll.select(['ETO']).sum()
-        etr = src_coll.select(['ETR']).sum()
+        eto_tcdc = src_coll.select(['ETO_TCDC']).sum()
+        etr_tcdc = src_coll.select(['ETR_TCDC']).sum()
+        eto_era5land = src_coll.select(['ETO_ERA5LAND']).sum()
+        etr_era5land = src_coll.select(['ETR_ERA5LAND']).sum()
+        eto_goes = src_coll.select(['ETO_GOES']).sum()
+        etr_goes = src_coll.select(['ETR_GOES']).sum()
         # # Compute reference ET at the hourly timestep and then sum to daily
         # # Note, this calculation is using the solar radiation computed from total cloud cover
         # def hourly_refet(img):
@@ -210,14 +220,35 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
     elif refet_timestep.lower() in ['daily', 'day']:
         # Compute reference ET at the daily timestep
         # Note, this calculation is using the solar radiation computed from total cloud cover
-        refet_obj = openet.refetgee.Daily.rtma(
+        refet_tcdc_obj = openet.refetgee.Daily.rtma(
             src_coll,
             rs=src_coll.select(['SRAD_TCDC']).sum().multiply(0.0864),
             elev=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/elevation'),
             lat=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
         )
-        eto = refet_obj.eto
-        etr = refet_obj.etr
+        eto_tcdc = refet_tcdc_obj.eto
+        etr_tcdc = refet_tcdc_obj.etr
+        
+        # Note, this calculation is using the solar radiation from ERA5-Land
+        refet_era5land_obj = openet.refetgee.Daily.rtma(
+            src_coll,
+            rs=src_coll.select(['SRAD_ERA5LAND']).sum().multiply(0.0864),
+            elev=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/elevation'),
+            lat=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
+        )
+        eto_era5land = refet_era5land_obj.eto
+        etr_era5land = refet_era5land_obj.etr
+
+        # Note, this calculation is using the solar radiation from the GOES DSR
+        refet_goes_obj = openet.refetgee.Daily.rtma(
+            src_coll,
+            rs=src_coll.select(['SRAD_GOES']).sum().multiply(0.0864),
+            elev=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/elevation'),
+            lat=ee.Image('projects/openet/assets/meteorology/urma/hawaii/ancillary/latitude'),
+        )
+        eto_goes = refet_goes_obj.eto
+        etr_goes = refet_goes_obj.etr
+        
     else:
         return f'{export_name} - Unsupported timestep {refet_timestep}, skipping'
 
@@ -241,9 +272,18 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
         'PRES': 'Pa',
         'WIND': 'm s-1',
         'TCDC': '%',
-        'SRAD_TCDC': 'MJ m-2 day-1',
-        'ETO': 'mm',
-        'ETR': 'mm',
+        'SRAD_TCDC': 'W m-2',
+        'SRAD_ERA5LAND': 'W m-2',
+        'SRAD_GOES': 'W m-2',
+        # 'SRAD_TCDC': 'MJ m-2 day-1',
+        # 'SRAD_ERA5LAND': 'MJ m-2 day-1',
+        # 'SRAD_GOES': 'MJ m-2 day-1',
+        'ETO_TCDC': 'mm',
+        'ETR_TCDC': 'mm',
+        'ETO_ERA5LAND': 'mm',
+        'ETR_ERA5LAND': 'mm',
+        'ETO_GOES': 'mm',
+        'ETR_GOES': 'mm',
         # 'PCP': 'kg m-2',
     }
 
@@ -266,10 +306,18 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
             src_coll.select(['PRES']).mean(),
             src_coll.select(['WIND']).mean(),
             src_coll.select(['SRAD_TCDC']).sum(),
+            src_coll.select(['SRAD_ERA5LAND']).sum(),
+            src_coll.select(['SRAD_GOES']).sum(),
             # # Convert to MJ m-2 day-1
             # src_coll.select(['SRAD_TCDC']).sum().multiply(0.0864),
-            eto,
-            etr,
+            # src_coll.select(['SRAD_ERA5LAND']).sum().multiply(0.0864),
+            # src_coll.select(['SRAD_GOES']).sum().multiply(0.0864),
+            eto_tcdc,
+            etr_tcdc,
+            eto_era5land,
+            etr_era5land,
+            eto_goes,
+            etr_goes,
             # src_coll.select(['PCP']).sum(),
         ])
         .rename([
@@ -281,8 +329,14 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
             'PRES',
             'WIND',
             'SRAD_TCDC',
-            'ETO',
-            'ETR',
+            'SRAD_ERA5LAND',
+            'SRAD_GOES',
+            'ETO_TCDC',
+            'ETR_TCDC',
+            'ETO_ERA5LAND',
+            'ETR_ERA5LAND',
+            'ETO_GOES',
+            'ETR_GOES',
             # 'PCP',
         ])
         .set(properties)
@@ -317,7 +371,7 @@ def urma_hawaii_daily_export(tgt_dt, refet_timestep='hourly', overwrite_flag=Fal
             return f'{export_name} - Unhandled Exception: {e}\n'
         time.sleep(i ** 3)
 
-    logging.info(f'  {export_name} - {task.id}')
+    # logging.info(f'  {export_name} - {task.id}')
     return f'{export_name} - {task.id}\n'
 
 
@@ -506,7 +560,7 @@ def parse_boolean_arg(request_json, request_args, arg_key, arg_default_str='fals
 
 
 def date_range(start_dt, end_dt, days=1, skip_leap_days=False):
-    """Generate dates within a range (inclusive)
+    """Generate dates within a range (exclusive)
 
     Parameters
     ----------
@@ -546,7 +600,7 @@ def get_ee_assets(asset_id, start_dt=None, end_dt=None, retries=4):
     asset_id : str
         A folder or image collection ID.
     start_dt : datetime, optional
-        Start date (inclusive).
+        Start date (exclusive).
     end_dt : datetime, optional
         End date (exclusive, similar to .filterDate()).
     retries : int, optional
@@ -674,14 +728,10 @@ def arg_parse():
         '--end', type=arg_valid_date, metavar='YYYY-MM-DD',
         help='End date (exclusive)')
     parser.add_argument(
-        '--timestep', default='daily', choices=['hourly', 'daily'],
+        '--timestep', default='hourly', choices=['hourly', 'daily'],
         help='Reference ET computation timestep')
-    # parser.add_argument(
-    #     '--delay', default=0, type=float,
-    #     help='Delay (in seconds) between each export tasks')
-    # parser.add_argument(
-    #     '--ready', default=2500, type=int,
-    #     help='Maximum number of queued READY tasks')
+    parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
@@ -700,41 +750,44 @@ if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
 
-    # Build the image collection if it doesn't exist
-    logging.debug(f'\nImage Collection: {ASSET_COLL_ID}')
-    if not ee.data.getInfo(ASSET_COLL_ID.rsplit('/', 1)[0]):
-        logging.info(f'\nImage collection folder does not exist and will be built'
-                     f'\n  {ASSET_COLL_ID.rsplit("/", 1)[0]}')
-        input('Press ENTER to continue')
-        ee.data.createAsset({'type': 'FOLDER'}, ASSET_COLL_ID.rsplit('/', 1)[0])
-    if not ee.data.getInfo(ASSET_COLL_ID):
-        logging.info(f'\nImage collection does not exist and will be built'
-                     f'\n  {ASSET_COLL_ID}')
-        input('Press ENTER to continue')
-        ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
+    logging.info('\nInitializing Earth Engine using project ID')
+    ee.Initialize(project=args.project)
 
-    # ingest_dt_list = daily_asset_dates(args.start, args.end, overwrite_flag=args.overwrite)
-    # for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
-    #     response = urma_hawaii_daily_export(
-    #         ingest_dt, refet_timestep=args.timestep, overwrite_flag=args.overwrite
-    #     )
-    #     # logging.info(f'  {response}')
+    # # Build the image collection if it doesn't exist
+    # logging.debug(f'\nImage Collection: {ASSET_COLL_ID}')
+    # if not ee.data.getInfo(ASSET_COLL_ID.rsplit('/', 1)[0]):
+    #     logging.info(f'\nImage collection folder does not exist and will be built'
+    #                  f'\n  {ASSET_COLL_ID.rsplit("/", 1)[0]}')
+    #     input('Press ENTER to continue')
+    #     ee.data.createAsset({'type': 'FOLDER'}, ASSET_COLL_ID.rsplit('/', 1)[0])
+    # if not ee.data.getInfo(ASSET_COLL_ID):
+    #     logging.info(f'\nImage collection does not exist and will be built'
+    #                  f'\n  {ASSET_COLL_ID}')
+    #     input('Press ENTER to continue')
+    #     ee.data.createAsset({'type': 'IMAGE_COLLECTION'}, ASSET_COLL_ID)
+
+    ingest_dt_list = daily_asset_dates(args.start, args.end, overwrite_flag=args.overwrite)
+    for ingest_dt in sorted(ingest_dt_list, reverse=args.reverse):
+        response = urma_hawaii_daily_export(
+            ingest_dt, refet_timestep=args.timestep, overwrite_flag=args.overwrite
+        )
+        logging.info(f'  {response}')
+
+        # if args.delay:
+        #     time.sleep(args.delay)
+
+    # from unittest.mock import Mock
+    # data = {}
+    # if args.start and args.end:
+    #     data['start'] = args.start.strftime('%Y-%m-%d')
+    #     data['end'] = args.end.strftime('%Y-%m-%d')
+    # if args.timestep:
+    #     data['refet_timestep'] = args.timestep
+    # if args.overwrite:
+    #     data['overwrite'] = str(args.overwrite)
+    # if args.overwrite:
+    #     data['reverse'] = str(args.reverse)
     #
-    #     # ready_tasks += 1
-    #     # ready_tasks = delay_task(ready_tasks, args.delay, args.ready)
-
-    from unittest.mock import Mock
-    data = {}
-    if args.start and args.end:
-        data['start'] = args.start.strftime('%Y-%m-%d')
-        data['end'] = args.end.strftime('%Y-%m-%d')
-    if args.timestep:
-        data['refet_timestep'] = args.timestep
-    if args.overwrite:
-        data['overwrite'] = str(args.overwrite)
-    if args.overwrite:
-        data['reverse'] = str(args.reverse)
-
-    req = Mock(get_json=Mock(return_value=data), args=data)
-    response = cron_scheduler(req)
-    print(response.data)
+    # req = Mock(get_json=Mock(return_value=data), args=data)
+    # response = cron_scheduler(req)
+    # print(response.data)

@@ -38,7 +38,7 @@ import logging
 # requests.packages.urllib3.disable_warnings()
 logging.getLogger('botocore').setLevel(logging.INFO)
 logging.getLogger('earthengine-api').setLevel(logging.INFO)
-logging.getLogger('googleapiclient').setLevel(logging.INFO)
+logging.getLogger('googleapiclient').setLevel(logging.ERROR)
 #logging.getLogger('netCDF4').setLevel(logging.INFO)
 logging.getLogger('rasterio').setLevel(logging.INFO)
 logging.getLogger('requests').setLevel(logging.INFO)
@@ -67,7 +67,7 @@ VARIABLES = [
     'total_precipitation',
     'eto_asce',
     'etr_asce',
-    # 'wind_10m',
+    'wind_10m',
 ]
 
 START_DAY_OFFSET = 30
@@ -81,11 +81,6 @@ if 'FUNCTION_REGION' in os.environ:
         default_scopes=['https://www.googleapis.com/auth/earthengine']
     )
     ee.Initialize(credentials, project=project_id)
-else:
-    # ee.Initialize(ee.ServiceAccountCredentials(
-    #     '', key_file='/Users/mortonc/Projects/keys/openet-assets.json'
-    # ))
-    ee.Initialize()
 
 
 def hourly_asset_ingest(
@@ -382,11 +377,11 @@ def hourly_asset_ingest(
             #         hourly_arrays[var][hourly_arrays[var] < 0] = 0
             #         # np.clip(hourly_arrays[var], a_min=0, a_max=None, out=hourly_arrays[var])
 
-            # # Compute wind speed from component vectors
-            # if 'wind_10m' in variables:
-            #     hourly_arrays['wind_10m'] = np.sqrt(
-            #         hourly_arrays['wind_u'] ** 2 + hourly_arrays['wind_v'] ** 2
-            #     )
+            # Compute wind speed from component vectors
+            if 'wind_10m' in variables:
+                hourly_arrays['wind_10m'] = np.sqrt(
+                    hourly_arrays['wind_u'] ** 2 + hourly_arrays['wind_v'] ** 2
+                )
 
             # Compute Reference ET
             if ('eto_asce' in variables) or ('etr_asce' in variables):
@@ -452,11 +447,9 @@ def hourly_asset_ingest(
             logging.debug('  Building output GeoTIFF')
             output_ds = rasterio.open(
                 upload_path, 'w',
-                driver='COG',
-                blocksize=256,
-                # driver='GTiff', tiled=True, blockxsize=256, blockysize=256,
+                driver='GTiff', tiled=True, blockxsize=512, blockysize=512,
+                # driver='COG', blocksize=256,
                 compress='deflate',
-                # compress='lzw',
                 count=len(variables),
                 crs=crs,
                 dtype=rasterio.float32,
@@ -474,8 +467,8 @@ def hourly_asset_ingest(
                 output_ds.write(data_array, band_i + 1)
                 del data_array
 
-            output_ds.build_overviews([2, 4, 8, 16], rasterio.warp.Resampling.average)
-            output_ds.update_tags(ns='rio_overview', resampling='average')
+            # output_ds.build_overviews([2, 4, 8, 16], rasterio.warp.Resampling.average)
+            # output_ds.update_tags(ns='rio_overview', resampling='average')
             output_ds.close()
             del output_ds
             del hourly_arrays
@@ -1092,6 +1085,8 @@ def arg_parse():
         '--hours', default='0-23', type=str,
         help='Comma separated or range of hours')
     parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
+    parser.add_argument(
         '--download', default=False, action='store_true',
         help='Download NetCDFs but do not start asset ingest')
     parser.add_argument(
@@ -1115,6 +1110,12 @@ def arg_parse():
 if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
+
+    logging.info('\nInitializing Earth Engine using project ID')
+    ee.Initialize(project=args.project)
+    # ee.Initialize(ee.ServiceAccountCredentials(
+    #     '', key_file='/Users/mortonc/Projects/keys/openet-assets.json'
+    # ))
 
     # Build the image collection if it doesn't exist
     logging.debug('Image Collection: {}'.format(ASSET_COLL_ID))
