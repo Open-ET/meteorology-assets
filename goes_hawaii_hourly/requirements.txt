@@ -1,0 +1,11 @@
+boto3
+earthengine-api==1.7.15
+flask==2.3.3
+google-cloud-storage==3.2.0
+h5netcdf
+openet-core
+rasterio==1.4.3
+# refet==0.4.2
+requests
+s3fs
+xarray

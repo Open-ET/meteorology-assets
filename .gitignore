@@ -13,11 +13,12 @@ __pycache__/
 .DS_Store
 
 config.py
+*.json
 
 *.asc
 *.asc.gz
+*.aux.xml
 *.grb2
 *.nc
 *.tif
-*.tif.aux.xml
 *.zip
