@@ -54,7 +54,7 @@ else:
     import logging
     # logging.basicConfig(level=logging.INFO, format='%(message)s')
     logging.getLogger('earthengine-api').setLevel(logging.INFO)
-    logging.getLogger('googleapiclient').setLevel(logging.INFO)
+    logging.getLogger('googleapiclient').setLevel(logging.ERROR)
     logging.getLogger('requests').setLevel(logging.INFO)
     logging.getLogger('urllib3').setLevel(logging.INFO)
 
@@ -67,10 +67,9 @@ if 'FUNCTION_REGION' in os.environ:
         # 'https://www.googleapis.com/auth/cloud-platform'
     )
     ee.Initialize(
-        credentials, project=project_id, opt_url='https://earthengine-highvolume.googleapis.com'
+        credentials, project=project_id,
+        # opt_url='https://earthengine-highvolume.googleapis.com'
     )
-else:
-    ee.Initialize(project=PROJECT_NAME, opt_url='https://earthengine-highvolume.googleapis.com')
 
 
 def era5land_daily_export(
@@ -192,7 +191,7 @@ def era5land_daily_export(
         crs = 'EPSG:4326'
         width, height = 461, 326
         transform = [0.1, 0, -11.05, 0, -0.1, 67.05]
-    elif region in ['hawaii']:
+    elif region in ['hawaii', 'hi']:
         start_hour_offset = 10
         crs = 'EPSG:4326'
         width, height = 61, 41
@@ -890,12 +889,8 @@ def arg_parse():
         help='Reference ET computation timestep')
     parser.add_argument(
         '--fill', default=0, type=int, help='Fill edge cells buffer size')
-    # parser.add_argument(
-    #     '--delay', default=0, type=float,
-    #     help='Delay (in seconds) between each export tasks')
-    # parser.add_argument(
-    #     '--ready', default=2500, type=int,
-    #     help='Maximum number of queued READY tasks')
+    parser.add_argument(
+        '--project', type=str, required=True, help='Earth Engine Project ID')
     parser.add_argument(
         '--overwrite', default=False, action='store_true',
         help='Force overwrite of existing files')
@@ -905,6 +900,13 @@ def arg_parse():
     parser.add_argument(
         '--debug', default=logging.INFO, const=logging.DEBUG,
         help='Debug level logging', action='store_const', dest='loglevel')
+    # parser.add_argument(
+    #     '--delay', default=0, type=float,
+    #     help='Delay (in seconds) between each export tasks')
+    # parser.add_argument(
+    #     '--ready', default=2500, type=int,
+    #     help='Maximum number of queued READY tasks')
+
     args = parser.parse_args()
 
     return args
@@ -913,6 +915,12 @@ def arg_parse():
 if __name__ == '__main__':
     args = arg_parse()
     logging.basicConfig(level=args.loglevel, format='%(message)s')
+
+    logging.info('\nInitializing Earth Engine using project ID')
+    ee.Initialize(
+        project=args.project,
+        # opt_url='https://earthengine-highvolume.googleapis.com'
+    )
 
     # Build the image collection if it doesn't exist
     if not args.region or (args.region.lower() == 'global'):
