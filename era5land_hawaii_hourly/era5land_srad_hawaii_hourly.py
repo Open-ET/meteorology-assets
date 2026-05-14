@@ -113,6 +113,7 @@ def asset_ingest(tgt_dt, workspace='/tmp', workers=10, overwrite=False, cleanup=
     nodata = -9999
     dtype = rasterio.float32
 
+    # CGM - The ERA5-Land solar image is the accumulation of the previous hour
     #   To better mimic what the models are expecting the values to be,
     #   compute the instantaneous value
     srad_prev_img = (
