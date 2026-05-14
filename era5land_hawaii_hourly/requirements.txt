@@ -1,0 +1,6 @@
+earthengine-api==1.7.15
+numpy
+openet-core>=0.8.1
+rasterio==1.3.9
+xee==0.1.0rc1
+xarray

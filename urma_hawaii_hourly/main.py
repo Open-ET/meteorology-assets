@@ -254,31 +254,45 @@ def urma_hawaii_hourly_ingest(
     hourly_arrays['SRAD_TCDC'] = ra * (0.25 + nn * 0.5)
 
     # Read GOES DSR if available
+    # The GOES solar images are being built as the "instantaneous" value at the image time
+    #   by averaging the 10-minute
     goes_srad_path = os.path.join(
-        goes_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'), tif_name
+        goes_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'),
+        f'{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
     )
     if goes_workspace and os.path.isfile(goes_srad_path):
-        with rasterio.open(goes_srad_path) as src:
+        with rasterio.open(goes_srad_prev_path) as src:
             hourly_arrays['SRAD_GOES'] = src.read(1).astype(np.float32)
             hourly_arrays['SRAD_GOES'][land_mask_array == 0] = np.nan
     else:
         hourly_arrays['SRAD_GOES'] = np.full(land_mask_array.shape, np.nan)
 
     # Read ERA5-Land DSR if available
-    era5land_srad_path = os.path.join(
-        era5land_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'), tif_name
+    # The ERA5-Land solar images are the accumulation over the previous hour,
+    #   so to get the value corresponding to the start of the target hour,
+    #   take the average of the target hour and the next hour
+    next_dt = tgt_dt + timedelta(hours=1)
+    era5land_srad_tgt_path = os.path.join(
+        era5land_workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'),
+        f'{tgt_dt.strftime(ASSET_DT_FMT)}.tif'
     )
-    if era5land_workspace and os.path.isfile(era5land_srad_path):
-        with rasterio.open(era5land_srad_path) as src:
-            hourly_arrays['SRAD_ERA5LAND'] = src.read(1).astype(np.float32)
-            hourly_arrays['SRAD_ERA5LAND'][land_mask_array == 0] = np.nan
+    era5land_srad_next_path = os.path.join(
+        era5land_workspace, next_dt.strftime('%Y'), next_dt.strftime('%Y%m%d'),
+        f'{next_dt.strftime(ASSET_DT_FMT)}.tif'
+    )
+    if (era5land_workspace
+            and os.path.isfile(era5land_srad_tgt_path)
+            and os.path.isfile(era5land_srad_next_path)):
+        with rasterio.open(era5land_srad_tgt_path) as src:
+            tgt_array = src.read(1).astype(np.float32)
+            tgt_array[land_mask_array == 0] = np.nan
+        with rasterio.open(era5land_srad_next_path) as src:
+            next_array = src.read(1).astype(np.float32)
+            next_array[land_mask_array == 0] = np.nan
+        hourly_arrays['SRAD_ERA5LAND'] = (tgt_array + next_array) * 0.5
     else:
         hourly_arrays['SRAD_ERA5LAND'] = np.full(land_mask_array.shape, np.nan)
 
-    # # Initialize Rs with GOES if available, but fallback to using cloud cover elsewhere
-    # rs = np.copy(hourly_arrays['SRAD_GOES'])
-    # rs_mask = np.isnan(rs)
-    # rs[rs_mask] = hourly_arrays['SRAD_TCDC'][rs_mask]
 
     # Compute reference ET using the cloud cover derived solar
     # TODO: Check if this should use "refet" method
@@ -558,11 +572,13 @@ def arg_parse():
         help='End date (exclusive)')
     parser.add_argument(
         '--era5land', metavar='PATH',
-        default=os.path.dirname(os.path.abspath(__file__)),
+        default='../era5land_hawaii_hourly',
+        # default=os.path.dirname(os.path.abspath(__file__)),
         help='Set the path to the Hawaii ERA5-Land solar data')
     parser.add_argument(
         '--goes', metavar='PATH',
-        default=os.path.dirname(os.path.abspath(__file__)),
+        default='../goes_hawaii_hourly',
+        # default=os.path.dirname(os.path.abspath(__file__)),
         help='Set the path to the Hawaii GOES DSR data')
     parser.add_argument(
         '--delay', default=1, type=float,

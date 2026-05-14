@@ -3,20 +3,13 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import pprint
-import shutil
 
-import boto3
 import ee
 from google.cloud import storage
 import numpy as np
-import numpy.ma as ma
 import openet.core.utils as utils
-from pyproj import CRS
 import rasterio
-from rasterio.transform import from_bounds
 from rasterio.warp import reproject, Resampling
-import s3fs
-import xarray as xr
 
 
 ASSET_COLL_ID = 'projects/openet/assets/meteorology/goes_dsr/hawaii/hourly'
@@ -73,14 +66,11 @@ DST_WKT = (
 #     # logging.basicConfig(level=logging.INFO, format='%(message)s')
 # logging.basicConfig(level=logging.INFO, format='%(message)s')
 # logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
-logging.getLogger('botocore').setLevel(logging.INFO)
 logging.getLogger('earthengine-api').setLevel(logging.INFO)
 logging.getLogger('googleapiclient').setLevel(logging.ERROR)
 logging.getLogger('h5py').setLevel(logging.INFO)
 logging.getLogger('pyproj').setLevel(logging.INFO)
 logging.getLogger('rasterio').setLevel(logging.INFO)
-#logging.getLogger('s3fs').setLevel(logging.INFO)
-logging.getLogger('s3transfer').setLevel(logging.INFO)
 logging.getLogger('urllib3').setLevel(logging.INFO)
 
 # if 'FUNCTION_REGION' in os.environ:
@@ -115,164 +105,35 @@ def asset_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False, ingest_flag=Tru
         logging.info(f'  Asset already exists, skipping date')
         return f'{tgt_date} - asset already exists - skipping'
 
-    # Save the hourly files in the DOY folder
-    year_ws = os.path.join(workspace, tgt_dt.strftime('%Y'))
-    date_ws = os.path.join(year_ws, tgt_dt.strftime('%Y%m%d'))
+    # Load the workspace for the target hour
+    date_ws = os.path.join(workspace, tgt_dt.strftime('%Y'), tgt_dt.strftime('%Y%m%d'))
+    hour_ws = os.path.join(date_ws, tgt_dt.strftime('%H'))
+
+    # Load the workspace for the previous hour
+    prev_dt = tgt_dt - timedelta(hours=1)
+    date_prev_ws = os.path.join(workspace, prev_dt.strftime('%Y'), prev_dt.strftime('%Y%m%d'))
+    hour_prev_ws = os.path.join(date_prev_ws, prev_dt.strftime('%H'))
+
     tif_file_name = f'{tgt_dt.strftime("%Y%m%d%H")}.tif'
     tif_file_path = os.path.join(date_ws, tif_file_name)
 
-    # DEADBEEF
-    # # Rename the DOY folders to a date string
-    # doy_ws = os.path.join(year_ws, tgt_dt.strftime('%j'))
-    # if os.path.isdir(doy_ws):
-    #     if not os.path.isdir(date_ws):
-    #         os.makedirs(date_ws)
-    #     shutil.copytree(doy_ws, date_ws, dirs_exist_ok=True)
-    #     shutil.rmtree(doy_ws)
+    # Build a list of files that should be included
+    dsr_tgt_paths = [
+        os.path.join(hour_ws, item)
+        for item in os.listdir(hour_ws)
+        if int(item.split('_')[-4][10:12]) <= 30 and item.endswith('dsr.tif')
+    ]
+    dsr_prev_paths = [
+        os.path.join(hour_prev_ws, item)
+        for item in os.listdir(hour_prev_ws)
+        if int(item.split('_')[-4][10:12]) >= 30 and item.endswith('dsr.tif')
+    ]
+    dsr_file_paths = sorted(dsr_prev_paths + dsr_tgt_paths)
 
-    hour_ws = os.path.join(date_ws, tgt_dt.strftime('%H'))
-    if not os.path.isdir(hour_ws):
-        os.makedirs(hour_ws)
+    if not dsr_file_paths:
+        logging.info(f'  No source files in hour, skipping hour')
+        return f'{tgt_date} - no source files in hour - skipping hour'
 
-    # TODO: Read from the remote netcdfs directly instead of downloading
-    logging.debug(f'  Getting list of available netcdf files')
-    nc_file_names = []
-    s3 = boto3.client('s3')
-    response = s3.list_objects_v2(
-        Bucket=AWS_BUCKET_NAME,
-        Prefix=f'{AWS_BUCKET_FOLDER}/{tgt_dt.strftime("%Y/%j/%H")}'
-    )
-    for content in response.get('Contents', []):
-        nc_file_url = content['Key']
-        nc_file_name = nc_file_url.split('/')[-1]
-        if not nc_file_name.endswith('.nc'):
-            continue
-        nc_file_names.append(nc_file_name)
-    nc_file_names = sorted(nc_file_names)
-    if not nc_file_names:
-        logging.info(f'  No netcdf files in hour, skipping date')
-        return f'{tgt_date} - no netcdf files in hour - skipping date'
-
-    # Build the 10-minute subset geotiff for each netcdf
-    for nc_file_name in nc_file_names:
-        nc_file_path = os.path.join(hour_ws, nc_file_name)
-
-        dsr_file_path = os.path.join(hour_ws, nc_file_name.replace('.nc', '_dsr.tif'))
-        dqf_file_path = os.path.join(hour_ws, nc_file_name.replace('.nc', '_dqf.tif'))
-
-        # Don't skip the scene if the netcdf files are present
-        if os.path.isfile(dsr_file_path) and not os.path.isfile(nc_file_path):
-            logging.debug(f'  {nc_file_name} - dsr file already exists, skipping')
-            continue
-
-        # if overwrite_flag or not os.path.isfile(nc_file_path):
-        if not os.path.isfile(nc_file_path):
-            logging.info(f'  {nc_file_name} - downloading')
-            nc_file_url = f'{AWS_BUCKET_FOLDER}/{tgt_dt.strftime("%Y/%j/%H")}/{nc_file_name}'
-            s3.download_file(AWS_BUCKET_NAME, nc_file_url, nc_file_path)
-
-        # CGM - Tried testing out reading directly from the bucket instead of downloading
-        #   but couldn't get it to work
-        # try:
-        #     fs = s3fs.S3FileSystem(anon=True)
-        #     nc_file_url = f's3://{AWS_BUCKET_NAME}/{AWS_BUCKET_FOLDER}/{tgt_dt.strftime("%Y/%j/%H")}/{nc_file_name}'
-        #     with fs.open(nc_file_url, mode='rb') as nc_f:
-        #         src_ds = xr.open_dataset(nc_f, engine="h5netcdf")
-        # except Exception as e:
-        #     logging.warning(f'  {nc_file_name} error opening file - skipping')
-        #     logging.warning(f'  Exception: {e}')
-        #     return f'{tgt_date} - {nc_file_name} could not be opened - skipping'
-
-        try:
-            src_ds = xr.open_dataset(nc_file_path, engine="h5netcdf")
-        except Exception as e:
-            logging.warning(f'  {nc_file_name} error opening file - skipping')
-            logging.warning(f'  Exception: {e}')
-            continue
-
-        src_height, src_width = src_ds['DSR'].shape
-
-        try:
-            src_crs = CRS.from_cf(src_ds.goes_imager_projection.attrs)
-            proj_info = src_ds["goes_imager_projection"]
-        except Exception as e:
-            logging.warning(f'  missing projection information - skipping')
-            logging.warning(f'  Exception: {e}')
-            pprint.pprint(dir(src_ds))
-            print(src_ds.goes_lat_lon_projection)
-            input('ENTER')
-            continue
-
-        h = proj_info.perspective_point_height  # satellite height above ellipsoid (m)
-
-        # --- Compute extent in scan-angle space ---
-        x = src_ds["x"][:].to_numpy() * h  # radians → meters (scan angle * height)
-        y = src_ds["y"][:].to_numpy() * h
-        x_min, x_max = float(x.min()), float(x.max())
-        y_min, y_max = float(y.min()), float(y.max())
-
-        # Not sure if from_bounds() was using pixel corner or centers,
-        #   so computing transform manually using the average cellsize
-        #   between the start and end x/y
-        # This gets values that are really close to what is shown in QGIS
-        cs_x = (x_max - x_min) / (src_width - 1)
-        cs_y = (y_max - y_min) / (src_height - 1)
-        src_transform = (cs_x, 0, x_min - cs_x / 2, 0, -cs_y, y_max + cs_y / 2)
-        # src_transform = from_bounds(x_min, y_min, x_max, y_max, src_width, src_height)
-
-        clip_width = SRC_COL_MAX - SRC_COL_MIN
-        clip_height = SRC_ROW_MAX - SRC_ROW_MIN
-        clip_transform = (
-            src_transform[0], 0, src_transform[2] + SRC_COL_MIN * src_transform[0],
-            0, src_transform[4], src_transform[5] + SRC_ROW_MIN * src_transform[4]
-        )
-
-        # Slice the arrays to the study area
-        try:
-            dsr_array = src_ds['DSR'][SRC_ROW_MIN:SRC_ROW_MAX, SRC_COL_MIN:SRC_COL_MAX].to_numpy()
-            dqf_array = src_ds['DQF'][SRC_ROW_MIN:SRC_ROW_MAX, SRC_COL_MIN:SRC_COL_MAX].to_numpy()
-        except Exception as e:
-            logging.warning(f'{e}')
-            continue
-
-        with rasterio.open(
-            dsr_file_path,
-            "w",
-            driver="GTiff",
-            height=clip_height,
-            width=clip_width,
-            count=1,
-            dtype=np.float32,
-            crs=src_crs,
-            transform=clip_transform,
-            nodata=np.nan,
-            tiled=True,
-            compress='DEFLATE',
-            # compress='LZW',
-        ) as dst_ds:
-            dst_ds.set_band_description(1, 'DSR')
-            dst_ds.write(dsr_array, 1)
-
-        with rasterio.open(
-            dqf_file_path,
-            "w",
-            driver="GTiff",
-            height=clip_height,
-            width=clip_width,
-            count=1,
-            dtype=np.float32,
-            # dtype=np.uint8,
-            crs=src_crs,
-            transform=clip_transform,
-            nodata=np.nan,
-            tiled=True,
-            compress='DEFLATE',
-            # compress='LZW',
-        ) as dst_ds:
-            dst_ds.set_band_description(1, 'DQF')
-            dst_ds.write(dqf_array, 1)
-
-        os.remove(nc_file_path)
 
     # Compute hourly mean from the 10-minute files
     # TODO: Come up with different approach to account for missing images
@@ -280,11 +141,11 @@ def asset_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False, ingest_flag=Tru
         data_arrays = {}
         mask_arrays = {}
 
-        for nc_file_name in nc_file_names:
-            minute = nc_file_name.split('_')[3][10:12]
+        for dsr_file_path in dsr_file_paths:
+            dsr_file_name = os.path.basename(dsr_file_path)
+            minute = dsr_file_name.split('_')[3][10:12]
 
-            dsr_file_path = os.path.join(hour_ws, nc_file_name.replace('.nc', '_dsr.tif'))
-            # dqf_file_path = os.path.join(hour_ws, nc_file_name.replace('.nc', '_dqf.tif'))
+            # dqf_file_path = dsr_file_path.replace('.nc', '_dqf.tif')
             if not os.path.isfile(dsr_file_path):
                 logging.warning(f'  Missing 10-min source file: {os.path.basename(dsr_file_path)}')
                 continue
@@ -333,7 +194,7 @@ def asset_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False, ingest_flag=Tru
             os.remove(temp_file_path)
 
         # Compute the mean of the 10-minute values
-        if nc_file_names and (len(nc_file_names) == len(data_arrays.keys())):
+        if dsr_file_paths and (len(dsr_file_paths) == len(data_arrays.keys())):
             # TODO: Come up with a better approach for computing the hourly mean
             #   when there are missing 10-minute images
             mean_array = np.nanmean([x for x in data_arrays.values()], axis=0)
@@ -375,7 +236,7 @@ def asset_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False, ingest_flag=Tru
         properties = {
             'date_ingested': f'{TODAY_DT.strftime("%Y-%m-%d")}',
             'source_bucket': f's3://{AWS_BUCKET_NAME}/{AWS_BUCKET_FOLDER}',
-            'source_files': ','.join(nc_file_names),
+            'source_files': ','.join([os.path.basename(x) for x in dsr_file_paths]),
             'units_DSR': 'W m-2',
         }
 
