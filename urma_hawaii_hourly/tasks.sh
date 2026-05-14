@@ -1,0 +1,1 @@
+python main.py --project ee-cmorton --overwrite --goes ../goes_hawaii_hourly --era5land ../era5land_hawaii_hourly --start 2024-04-18 --end 2026-05-01

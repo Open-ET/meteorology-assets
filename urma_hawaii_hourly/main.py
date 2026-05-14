@@ -275,8 +275,8 @@ def urma_hawaii_hourly_ingest(
     )
     if era5land_workspace and os.path.isfile(era5land_srad_path):
         with rasterio.open(era5land_srad_path) as src:
-            era5land_srad_path = src.read(1).astype(np.float32)
-            era5land_srad_path[land_mask_array == 0] = np.nan
+            hourly_arrays['SRAD_ERA5LAND'] = src.read(1).astype(np.float32)
+            hourly_arrays['SRAD_ERA5LAND'][land_mask_array == 0] = np.nan
     else:
         hourly_arrays['SRAD_ERA5LAND'] = np.full(land_mask_array.shape, np.nan)
 

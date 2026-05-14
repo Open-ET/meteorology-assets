@@ -118,17 +118,23 @@ def asset_ingest(tgt_dt, workspace='/tmp', overwrite_flag=False, ingest_flag=Tru
     tif_file_path = os.path.join(date_ws, tif_file_name)
 
     # Build a list of files that should be included
-    dsr_tgt_paths = [
-        os.path.join(hour_ws, item)
-        for item in os.listdir(hour_ws)
-        if int(item.split('_')[-4][10:12]) <= 30 and item.endswith('dsr.tif')
-    ]
-    dsr_prev_paths = [
-        os.path.join(hour_prev_ws, item)
-        for item in os.listdir(hour_prev_ws)
-        if int(item.split('_')[-4][10:12]) >= 30 and item.endswith('dsr.tif')
-    ]
-    dsr_file_paths = sorted(dsr_prev_paths + dsr_tgt_paths)
+    try:
+        dsr_tgt_paths = [
+            os.path.join(hour_ws, item)
+            for item in os.listdir(hour_ws)
+            if item.endswith('dsr.tif') and int(item.split('_')[-4][10:12]) <= 30
+        ]
+        dsr_prev_paths = [
+            os.path.join(hour_prev_ws, item)
+            for item in os.listdir(hour_prev_ws)
+            if item.endswith('dsr.tif') and int(item.split('_')[-4][10:12]) >= 30
+        ]
+        dsr_file_paths = sorted(dsr_prev_paths + dsr_tgt_paths)
+    except Exception as e:
+        logging.warning(e)
+        pprint.pprint(os.listdir(hour_ws))
+        pprint.pprint(os.listdir(hour_prev_ws))
+        input('ENTER')
 
     if not dsr_file_paths:
         logging.info(f'  No source files in hour, skipping hour')

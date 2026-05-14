@@ -1,0 +1,1 @@
+python era5land_srad_hawaii_hourly.py --project ee-cmorton --start 2024-03-11 --end 2026-05-01 --overwrite
