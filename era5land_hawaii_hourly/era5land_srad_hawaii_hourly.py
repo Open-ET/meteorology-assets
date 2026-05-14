@@ -113,19 +113,24 @@ def asset_ingest(tgt_dt, workspace='/tmp', workers=10, overwrite=False, cleanup=
     nodata = -9999
     dtype = rasterio.float32
 
-    # # CGM - The ERA5-Land solar image is the accumulation of the previous hour
-    # #   To better mimic what the models are expecting the values to be,
-    # #   read solar values from the next image instead
-    # srad_img = (
-    #     ee.Image(f'{SOURCE_COLL_ID}/{(tgt_dt + timedelta(hours=1)).strftime("%Y%m%dT%H")}')
-    #     .select([src_band_name], [dst_band_name])
-    #     .divide(3600)
-    # )
-    srad_img = (
-        ee.Image(f'{SOURCE_COLL_ID}/{tgt_dt.strftime("%Y%m%dT%H")}')
+    #   To better mimic what the models are expecting the values to be,
+    #   compute the instantaneous value
+    srad_prev_img = (
+        ee.Image(f'{SOURCE_COLL_ID}/{(tgt_dt).strftime("%Y%m%dT%H")}')
         .select([src_band_name], [dst_band_name])
         .divide(3600)
     )
+    srad_next_img = (
+        ee.Image(f'{SOURCE_COLL_ID}/{(tgt_dt + timedelta(hours=1)).strftime("%Y%m%dT%H")}')
+        .select([src_band_name], [dst_band_name])
+        .divide(3600)
+    )
+    srad_img = srad_prev_img.add(srad_next_img).divide(2)
+    # srad_img = (
+    #     ee.Image(f'{SOURCE_COLL_ID}/{tgt_dt.strftime("%Y%m%dT%H")}')
+    #     .select([src_band_name], [dst_band_name])
+    #     .divide(3600)
+    # )
 
     # Fill any masked pixels along the edge of the land mask
     # This will fill most coastal pixels and any small holes
@@ -163,18 +168,20 @@ def asset_ingest(tgt_dt, workspace='/tmp', workers=10, overwrite=False, cleanup=
         output_ds.write(np.full(export_info['shape'], nodata, dtype=dtype), 1)
 
     logging.debug('  Writing arrays')
-    output_xr = xarray.open_dataset(
-        srad_img,
-        engine='ee',
-        crs=export_info['crs'],
-        crs_transform=tuple(export_info['geo']),
-        shape_2d=export_info['shape'],
-        executor_kwargs={'max_workers': workers}
-    )
+
     try:
+        output_xr = xarray.open_dataset(
+            srad_img,
+            engine='ee',
+            crs=export_info['crs'],
+            crs_transform=tuple(export_info['geo']),
+            shape_2d=export_info['shape'],
+            executor_kwargs={'max_workers': workers}
+        )
         output_array = output_xr[dst_band_name].values[0, :, :]
     except Exception as e:
         logging.info('  Error reading array data, skipping')
+        logging.info(f'  {e}')
         os.remove(temp_path)
         return False
 
