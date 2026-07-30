@@ -1,0 +1,5 @@
+earthengine-api==1.7.15
+openet-core==0.8.1
+numpy
+pandas
+refet>=0.4.0
